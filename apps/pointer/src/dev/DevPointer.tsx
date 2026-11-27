@@ -46,10 +46,6 @@ export function DevPointer() {
     hideHandRef.current = hideHand;
   }, [hideHand]);
 
-  useEffect(() => {
-    return () => channel.close();
-  }, [channel]);
-
   // Hotkeys: C clear, Space hide hand
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -76,7 +72,11 @@ export function DevPointer() {
     }
 
     pipelineRef.current = new PosePipeline({ mapping: loadMapping() });
-    channel.postMessage({ kind: 'hello', name: 'Harness', color: '#4FC3F7' });
+    try {
+      channel.postMessage({ kind: 'hello', name: 'Harness', color: '#4FC3F7' });
+    } catch (err) {
+      console.warn('harness hello failed', err);
+    }
 
     if (inputMode === 'mouse') {
       const started = performance.now();

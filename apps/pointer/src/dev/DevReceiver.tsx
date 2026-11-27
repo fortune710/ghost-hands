@@ -152,7 +152,8 @@ export function DevReceiver() {
       cancelAnimationFrame(rafRef.current);
       window.removeEventListener('resize', resize);
       channel.removeEventListener('message', onMessage);
-      channel.close();
+      // Do not close the shared BroadcastChannel — StrictMode remounts would
+      // kill the singleton mid-session (see harnessChannel.ts).
       rendererRef.current = null;
     };
   }, [channel]);
