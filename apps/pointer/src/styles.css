@@ -1,0 +1,132 @@
+:root {
+  color-scheme: light;
+  --bg: #0f1419;
+  --fg: #e8eef4;
+  --muted: #9aa7b5;
+  --accent: #4fc3f7;
+  --danger: #ff6b6b;
+  --ok: #3ddc97;
+  --card: #1a222c;
+  font-family: 'IBM Plex Sans', 'Segoe UI', sans-serif;
+  line-height: 1.45;
+  background: radial-gradient(1200px 600px at 20% -10%, #1c2a38 0%, var(--bg) 55%);
+  color: var(--fg);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+}
+
+a {
+  color: var(--accent);
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.page {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 2.5rem 1.25rem 4rem;
+}
+
+.brand {
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  margin: 0 0 0.35rem;
+}
+
+.lede {
+  color: var(--muted);
+  margin: 0 0 1.75rem;
+}
+
+.panel {
+  background: color-mix(in srgb, var(--card) 88%, transparent);
+  border: 1px solid #2a3542;
+  border-radius: 12px;
+  padding: 1.25rem;
+}
+
+label {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+input[type='text'] {
+  width: 100%;
+  padding: 0.7rem 0.85rem;
+  border-radius: 8px;
+  border: 1px solid #334155;
+  background: #0b1016;
+  color: var(--fg);
+  margin-bottom: 1rem;
+}
+
+.row {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+button.primary {
+  background: var(--accent);
+  color: #062033;
+  border: 0;
+  border-radius: 8px;
+  padding: 0.7rem 1.1rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+button.ghost {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 0.7rem 1.1rem;
+  cursor: pointer;
+}
+
+.banner {
+  background: #123047;
+  border: 1px solid #25506c;
+  color: #cfefff;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  margin: 1rem 0;
+  font-size: 0.92rem;
+}
+
+.harness {
+  display: grid;
+  gap: 1rem;
+}
+
+.harness canvas,
+.harness .stage {
+  width: 100%;
+  max-width: 960px;
+  aspect-ratio: 16 / 10;
+  background: #111;
+  border-radius: 8px;
+  border: 1px solid #2a3542;
+}
+
+.status {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  color: var(--muted);
+}

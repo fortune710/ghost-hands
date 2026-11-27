@@ -1,0 +1,58 @@
+:root {
+  font-family: 'IBM Plex Sans', 'Segoe UI', sans-serif;
+  color: #e8eef4;
+  background: #0f1419;
+}
+
+body {
+  margin: 0;
+}
+
+.control {
+  padding: 1.25rem;
+  max-width: 520px;
+}
+
+.muted {
+  color: #9aa7b5;
+  font-size: 0.9rem;
+}
+
+.card {
+  background: #1a222c;
+  border: 1px solid #2a3542;
+  border-radius: 10px;
+  padding: 1rem;
+  margin: 1rem 0;
+}
+
+.row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+button {
+  font: inherit;
+  border-radius: 8px;
+  border: 1px solid #334155;
+  background: #4fc3f7;
+  color: #062033;
+  padding: 0.55rem 0.9rem;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.log {
+  background: #0b1016;
+  border: 1px solid #2a3542;
+  border-radius: 8px;
+  padding: 0.75rem;
+  min-height: 180px;
+  white-space: pre-wrap;
+  font-size: 0.8rem;
+}

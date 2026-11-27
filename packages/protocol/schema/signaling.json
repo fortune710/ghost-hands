@@ -1,0 +1,228 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ghosthands.fortunealebiosu.dev/schema/signaling.json",
+  "title": "GhostHandsSignaling",
+  "description": "WebSocket signaling messages (host/pointer <-> server)",
+  "type": "object",
+  "definitions": {
+    "Sdp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "sdp"],
+      "properties": {
+        "type": { "type": "string", "enum": ["offer", "answer", "pranswer", "rollback"] },
+        "sdp": { "type": "string" }
+      }
+    },
+    "IceCandidate": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "candidate": { "type": "string" },
+        "sdpMid": { "type": ["string", "null"] },
+        "sdpMLineIndex": { "type": ["integer", "null"] },
+        "usernameFragment": { "type": ["string", "null"] }
+      }
+    },
+    "HostAuth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "host_token", "proto"],
+      "properties": {
+        "t": { "const": "auth" },
+        "host_token": { "type": "string" },
+        "proto": { "type": "integer", "const": 1 }
+      }
+    },
+    "HostApprove": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "peer"],
+      "properties": {
+        "t": { "const": "approve" },
+        "peer": { "type": "string" }
+      }
+    },
+    "HostDeny": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "peer"],
+      "properties": {
+        "t": { "const": "deny" },
+        "peer": { "type": "string" }
+      }
+    },
+    "HostKick": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "peer"],
+      "properties": {
+        "t": { "const": "kick" },
+        "peer": { "type": "string" }
+      }
+    },
+    "HostEnd": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t"],
+      "properties": {
+        "t": { "const": "end" }
+      }
+    },
+    "PointerJoin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "name", "color", "proto"],
+      "properties": {
+        "t": { "const": "join" },
+        "name": { "type": "string", "maxLength": 24 },
+        "color": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "proto": { "type": "integer", "const": 1 }
+      }
+    },
+    "PointerLeave": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t"],
+      "properties": {
+        "t": { "const": "leave" }
+      }
+    },
+    "SdpMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "to", "sdp"],
+      "properties": {
+        "t": { "const": "sdp" },
+        "to": { "type": "string" },
+        "from": { "type": "string" },
+        "sdp": { "$ref": "#/definitions/Sdp" }
+      }
+    },
+    "IceMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "to"],
+      "properties": {
+        "t": { "const": "ice" },
+        "to": { "type": "string" },
+        "from": { "type": "string" },
+        "candidate": {
+          "oneOf": [{ "$ref": "#/definitions/IceCandidate" }, { "type": "null" }]
+        }
+      }
+    },
+    "ServerReady": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "session_id", "expires_at"],
+      "properties": {
+        "t": { "const": "ready" },
+        "session_id": { "type": "string" },
+        "expires_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "JoinRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "peer", "name", "color"],
+      "properties": {
+        "t": { "const": "join_request" },
+        "peer": { "type": "string" },
+        "name": { "type": "string" },
+        "color": { "type": "string" }
+      }
+    },
+    "PeerLeft": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "peer", "reason"],
+      "properties": {
+        "t": { "const": "peer_left" },
+        "peer": { "type": "string" },
+        "reason": { "type": "string", "enum": ["leave", "timeout", "kicked"] }
+      }
+    },
+    "Pending": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t"],
+      "properties": { "t": { "const": "pending" } }
+    },
+    "Approved": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "peer", "pointer_token", "ice_servers", "ice_ttl_s"],
+      "properties": {
+        "t": { "const": "approved" },
+        "peer": { "type": "string" },
+        "pointer_token": { "type": "string" },
+        "ice_servers": { "type": "array", "items": { "type": "object" } },
+        "ice_ttl_s": { "type": "integer" }
+      }
+    },
+    "Denied": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t"],
+      "properties": { "t": { "const": "denied" } }
+    },
+    "Kicked": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t"],
+      "properties": { "t": { "const": "kicked" } }
+    },
+    "HostReconnecting": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t"],
+      "properties": { "t": { "const": "host_reconnecting" } }
+    },
+    "SessionEnded": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "reason"],
+      "properties": {
+        "t": { "const": "session_ended" },
+        "reason": {
+          "type": "string",
+          "enum": ["host_ended", "expired", "host_timeout"]
+        }
+      }
+    },
+    "ErrorMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "code"],
+      "properties": {
+        "t": { "const": "error" },
+        "code": {
+          "type": "string",
+          "enum": [
+            "ROOM_NOT_FOUND",
+            "ROOM_EXPIRED",
+            "ROOM_FULL",
+            "RATE_LIMITED",
+            "PROTO_MISMATCH",
+            "BAD_MESSAGE",
+            "UNAUTHORIZED"
+          ]
+        },
+        "msg": { "type": "string" }
+      }
+    },
+    "Ping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t"],
+      "properties": { "t": { "const": "ping" } }
+    },
+    "Pong": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t"],
+      "properties": { "t": { "const": "pong" } }
+    }
+  }
+}
