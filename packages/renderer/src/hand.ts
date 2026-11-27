@@ -69,6 +69,8 @@ export interface DrawGhostHandArgs {
   tipPx: Landmark2D;
   gesture: Gesture;
   style?: Partial<GhostHandStyle>;
+  /** Multiplier applied to every globalAlpha (e.g. presence fade). Default 1. */
+  fade?: number;
   /** Optional name label under wrist. */
   name?: string;
   /** Recent tip positions for laser trail (up to 6 samples). */
@@ -79,6 +81,8 @@ export interface ReticleStyle {
   color?: string;
   radiusPx?: number;
   coreRadiusPx?: number;
+  /** Multiplier applied to reticle globalAlpha. Default 1. */
+  fade?: number;
 }
 
 /** Mix hex color toward white by `amount` in [0,1]. */
@@ -114,6 +118,7 @@ export function drawGhostHand(args: DrawGhostHandArgs): void {
   if (landmarksPx.length < 21) return;
 
   const style = { ...DEFAULT_STYLE, ...args.style };
+  const fade = args.fade ?? 1;
   const palm = palmSizePx(landmarksPx);
   const scale = palm / Math.max(1, style.handHeightPx);
   const baseWidth = Math.max(2.5, 10 * scale);
@@ -124,7 +129,7 @@ export function drawGhostHand(args: DrawGhostHandArgs): void {
   ctx.save();
 
   // Soft outer glow pass
-  ctx.globalAlpha = style.opacity * 0.35;
+  ctx.globalAlpha = style.opacity * 0.35 * fade;
   ctx.strokeStyle = style.color;
   ctx.shadowColor = style.color;
   ctx.shadowBlur = 12;
@@ -144,7 +149,7 @@ export function drawGhostHand(args: DrawGhostHandArgs): void {
   ctx.shadowBlur = 0;
 
   // Lighter 1.5px outline
-  ctx.globalAlpha = Math.min(1, style.opacity + 0.25);
+  ctx.globalAlpha = Math.min(1, style.opacity + 0.25) * fade;
   ctx.strokeStyle = outlineColor;
   for (const [a, b] of HAND_CONNECTIONS) {
     const pa = landmarksPx[a];
@@ -159,7 +164,7 @@ export function drawGhostHand(args: DrawGhostHandArgs): void {
   }
 
   // 35% opacity fill in pointer color (rounded capsules)
-  ctx.globalAlpha = style.opacity;
+  ctx.globalAlpha = style.opacity * fade;
   ctx.strokeStyle = style.color;
   for (const [a, b] of HAND_CONNECTIONS) {
     const pa = landmarksPx[a];
@@ -190,7 +195,7 @@ export function drawGhostHand(args: DrawGhostHandArgs): void {
       for (let i = 1; i < tipTrail.length; i++) {
         const prev = tipTrail[i - 1]!;
         const cur = tipTrail[i]!;
-        ctx.globalAlpha = (i / tipTrail.length) * 0.55;
+        ctx.globalAlpha = (i / tipTrail.length) * 0.55 * fade;
         ctx.lineWidth = 2 + (i / tipTrail.length) * 2;
         ctx.beginPath();
         ctx.moveTo(prev.x, prev.y);
@@ -198,7 +203,7 @@ export function drawGhostHand(args: DrawGhostHandArgs): void {
         ctx.stroke();
       }
     }
-    ctx.globalAlpha = 1;
+    ctx.globalAlpha = 1 * fade;
     ctx.fillStyle = '#FFFFFF';
     ctx.shadowColor = style.color;
     ctx.shadowBlur = 8;
@@ -217,7 +222,7 @@ export function drawGhostHand(args: DrawGhostHandArgs): void {
     const wrist = landmarksPx[0]!;
     ctx.font = '12px ui-sans-serif, system-ui, sans-serif';
     ctx.fillStyle = style.color;
-    ctx.globalAlpha = 0.9;
+    ctx.globalAlpha = 0.9 * fade;
     ctx.textAlign = 'center';
     ctx.fillText(name, wrist.x, wrist.y + 18);
   }
@@ -236,9 +241,10 @@ export function drawReticle(
   const color = style?.color ?? '#FFFFFF';
   const radius = style?.radiusPx ?? 14;
   const core = style?.coreRadiusPx ?? Math.max(2, radius * 0.3);
+  const fade = style?.fade ?? 1;
 
   ctx.save();
-  ctx.globalAlpha = 0.95;
+  ctx.globalAlpha = 0.95 * fade;
   ctx.strokeStyle = color;
   ctx.lineWidth = 2;
   ctx.shadowColor = color;

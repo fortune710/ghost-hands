@@ -159,16 +159,14 @@ export class OverlayRenderer {
       landmarksPx: lmPx,
       tipPx,
       gesture: frame.gesture,
-      style: { color, opacity: 0.35 * opacity, handHeightPx: DEFAULT_HAND_HEIGHT_PX },
+      style: { color, opacity: 0.35, handHeightPx: DEFAULT_HAND_HEIGHT_PX },
+      fade: opacity,
       tipTrail: [...this.tipTrailPoints],
       name: frame.name,
     });
 
     if (frame.gesture === Gesture.Point || frame.gesture === Gesture.Pinch) {
-      ctx.save();
-      ctx.globalAlpha = opacity;
-      drawReticle(ctx, tipPx, { color });
-      ctx.restore();
+      drawReticle(ctx, tipPx, { color, fade: opacity });
     }
   }
 }

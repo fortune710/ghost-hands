@@ -6,7 +6,7 @@ import {
   zoneFromTwoPoints,
   type ActiveZone,
 } from '@ghost-hands/gestures';
-import { createSyntheticHand } from '../tracking/syntheticHand';
+import { createHandTracker } from '../tracking/handTracker';
 import { loadZone, resetZone, saveZone } from '../tracking/calibrationStore';
 
 type Step =
@@ -29,55 +29,85 @@ export function Calibrate() {
   const [zone, setZone] = useState<ActiveZone>(() => loadZone());
   const [msg, setMsg] = useState('Ready. Start calibration when your hand is visible.');
   const tipRef = useRef({ x: 0.5, y: 0.5 });
+  const handPresentRef = useRef(false);
+  const mouseRef = useRef<{ x: number; y: number } | null>(null);
   const cornersRef = useRef<Array<{ x: number; y: number }>>([]);
+  const captureGenRef = useRef(0);
+  const holdRafRef = useRef(0);
+  const zoneRef = useRef(zone);
+  const stepRef = useRef(step);
+  zoneRef.current = zone;
+  stepRef.current = step;
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const synth = createSyntheticHand({ mode: 'point' });
-    let raf = 0;
-    let mouse: { x: number; y: number } | null = null;
+
+    const tracker = createHandTracker({
+      preferSynthetic: false,
+      previewCanvas: canvas,
+    });
 
     const onMove = (e: MouseEvent) => {
       const rect = canvas.getBoundingClientRect();
-      mouse = {
+      mouseRef.current = {
         x: (e.clientX - rect.left) / rect.width,
         y: (e.clientY - rect.top) / rect.height,
       };
     };
-    canvas.addEventListener('mousemove', onMove);
-
-    const loop = () => {
-      raf = requestAnimationFrame(loop);
-      const t = performance.now();
-      if (mouse) synth.setTarget(mouse.x, mouse.y);
-      else {
-        synth.setTarget(0.5 + 0.2 * Math.sin(t / 900), 0.5 + 0.15 * Math.cos(t / 700));
-      }
-      const sample = synth.sample(t);
-      const tip = sample.landmarks[8] ?? { x: 0.5, y: 0.5 };
-      tipRef.current = { x: tip.x, y: tip.y };
-      drawCalib(canvas, tipRef.current, zone, step);
+    const onLeave = () => {
+      mouseRef.current = null;
     };
-    raf = requestAnimationFrame(loop);
+    canvas.addEventListener('mousemove', onMove);
+    canvas.addEventListener('mouseleave', onLeave);
+
+    tracker.onFrame((sample) => {
+      const mouse = mouseRef.current;
+      if (mouse) {
+        // Explicit mouse aiming wins while hovering the canvas.
+        tipRef.current = { x: mouse.x, y: mouse.y };
+        handPresentRef.current = true;
+      } else if (sample && sample.confidence > 0 && sample.landmarks[8]) {
+        const tip = sample.landmarks[8];
+        tipRef.current = { x: tip.x, y: tip.y };
+        handPresentRef.current = true;
+      } else {
+        handPresentRef.current = false;
+      }
+      drawCalib(canvas, tipRef.current, zoneRef.current, stepRef.current);
+    });
+    void tracker.start();
 
     return () => {
-      cancelAnimationFrame(raf);
+      captureGenRef.current += 1;
+      if (holdRafRef.current) {
+        cancelAnimationFrame(holdRafRef.current);
+        holdRafRef.current = 0;
+      }
+      tracker.stop();
       canvas.removeEventListener('mousemove', onMove);
+      canvas.removeEventListener('mouseleave', onLeave);
     };
-  }, [zone, step]);
+  }, []);
 
   const holdCorner = (label: string, next: () => void) => {
+    const gen = captureGenRef.current;
     setMsg(`Hold steady at ${label} for 1s…`);
     const startTip = { ...tipRef.current };
     let holdStart: number | null = null;
     const started = performance.now();
 
     const tick = () => {
+      if (gen !== captureGenRef.current) return;
       const now = performance.now();
       if (now - started > 8000) {
         setStep('reject');
         setMsg('Timed out — try again.');
+        return;
+      }
+      if (!handPresentRef.current) {
+        holdStart = null;
+        holdRafRef.current = requestAnimationFrame(tick);
         return;
       }
       const tip = tipRef.current;
@@ -85,6 +115,7 @@ export function Calibrate() {
       if (moved < 0.01) {
         if (holdStart === null) holdStart = now;
         if (now - holdStart >= 1000) {
+          if (gen !== captureGenRef.current) return;
           cornersRef.current.push({ ...tip });
           next();
           return;
@@ -94,12 +125,17 @@ export function Calibrate() {
         startTip.x = tip.x;
         startTip.y = tip.y;
       }
-      requestAnimationFrame(tick);
+      holdRafRef.current = requestAnimationFrame(tick);
     };
-    requestAnimationFrame(tick);
+    holdRafRef.current = requestAnimationFrame(tick);
   };
 
   const start2Point = () => {
+    captureGenRef.current += 1;
+    if (holdRafRef.current) {
+      cancelAnimationFrame(holdRafRef.current);
+      holdRafRef.current = 0;
+    }
     cornersRef.current = [];
     setStep('tl');
     setMsg('Point at the top-left corner of your screen area.');
@@ -107,8 +143,10 @@ export function Calibrate() {
       setStep('br');
       setMsg('Point at the bottom-right corner.');
       holdCorner('bottom-right', () => {
+        const gen = captureGenRef.current;
         const [tl, br] = cornersRef.current;
         const z = tl && br ? zoneFromTwoPoints(tl, br) : null;
+        if (gen !== captureGenRef.current) return;
         if (!z) {
           setStep('reject');
           setMsg('Zone too small or invalid. Reset and retry.');
@@ -123,6 +161,11 @@ export function Calibrate() {
   };
 
   const start4Corner = () => {
+    captureGenRef.current += 1;
+    if (holdRafRef.current) {
+      cancelAnimationFrame(holdRafRef.current);
+      holdRafRef.current = 0;
+    }
     cornersRef.current = [];
     const order: Array<{ step: Step; label: string }> = [
       { step: 'tl', label: 'top-left' },
@@ -132,10 +175,12 @@ export function Calibrate() {
     ];
     const run = (i: number) => {
       if (i >= order.length) {
+        const gen = captureGenRef.current;
         const [tl, tr, br, bl] = cornersRef.current;
         // AABB from four corners (homography available via gestures package for M4)
         const z =
           tl && tr && br && bl ? zoneFromFourCorners(tl, tr, br, bl) : null;
+        if (gen !== captureGenRef.current) return;
         if (!z) {
           setStep('reject');
           setMsg('4-corner AABB invalid. Reset and retry.');
@@ -196,6 +241,11 @@ export function Calibrate() {
             className="ghost"
             type="button"
             onClick={() => {
+              captureGenRef.current += 1;
+              if (holdRafRef.current) {
+                cancelAnimationFrame(holdRafRef.current);
+                holdRafRef.current = 0;
+              }
               resetZone();
               setZone(loadZone());
               setStep('idle');

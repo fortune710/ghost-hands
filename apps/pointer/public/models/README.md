@@ -20,12 +20,14 @@ If the model is missing, `HandTracker` falls back to the synthetic demo hand aut
 Copy Vision WASM from the installed package (after `bun install`):
 
 ```bash
+mkdir -p apps/pointer/public/models/wasm
 cp -R node_modules/@mediapipe/tasks-vision/wasm/* apps/pointer/public/models/wasm/
 ```
 
 Or from the monorepo root:
 
 ```bash
+mkdir -p apps/pointer/public/models/wasm
 cp -R apps/pointer/node_modules/@mediapipe/tasks-vision/wasm/. \
   apps/pointer/public/models/wasm/
 ```

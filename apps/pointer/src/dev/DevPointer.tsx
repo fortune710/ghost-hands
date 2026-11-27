@@ -36,10 +36,13 @@ export function DevPointer() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const tipRef = useRef({ x: 0.5, y: 0.5 });
+  const handPresentRef = useRef(false);
   const seqRef = useRef(0);
   const pipelineRef = useRef<PosePipeline | null>(null);
   const trackerRef = useRef<ReturnType<typeof createHandTracker> | null>(null);
   const hideHandRef = useRef(false);
+  const calibGenRef = useRef(0);
+  const calibRafRef = useRef(0);
   const channel = useMemo(() => openHarnessChannel(), []);
 
   useEffect(() => {
@@ -66,6 +69,11 @@ export function DevPointer() {
 
   useEffect(() => {
     if (!live) {
+      calibGenRef.current += 1;
+      if (calibRafRef.current) {
+        cancelAnimationFrame(calibRafRef.current);
+        calibRafRef.current = 0;
+      }
       trackerRef.current?.stop();
       trackerRef.current = null;
       return;
@@ -79,6 +87,7 @@ export function DevPointer() {
     }
 
     if (inputMode === 'mouse') {
+      handPresentRef.current = true;
       const started = performance.now();
       let frames = 0;
       let lastFpsAt = started;
@@ -105,6 +114,7 @@ export function DevPointer() {
           tip,
           landmarks,
         };
+        handPresentRef.current = frame.handPresent;
         publishPose(channel, frame);
         frames += 1;
         if (performance.now() - lastFpsAt >= 1000) {
@@ -116,7 +126,14 @@ export function DevPointer() {
       }, 1000 / 30);
       setSource('synthetic');
       setGestureLabel('POINT');
-      return () => window.clearInterval(id);
+      return () => {
+        window.clearInterval(id);
+        calibGenRef.current += 1;
+        if (calibRafRef.current) {
+          cancelAnimationFrame(calibRafRef.current);
+          calibRafRef.current = 0;
+        }
+      };
     }
 
     const tracker = createHandTracker({
@@ -139,6 +156,7 @@ export function DevPointer() {
           events: result.events,
         };
       }
+      handPresentRef.current = result.frame.handPresent;
       publishPose(channel, result.frame);
       for (const ev of result.events) publishCtrl(channel, ev);
       setGestureLabel(GESTURE_LABEL[result.frame.gesture] ?? 'NONE');
@@ -154,6 +172,11 @@ export function DevPointer() {
     void tracker.start();
 
     return () => {
+      calibGenRef.current += 1;
+      if (calibRafRef.current) {
+        cancelAnimationFrame(calibRafRef.current);
+        calibRafRef.current = 0;
+      }
       tracker.stop();
       trackerRef.current = null;
     };
@@ -163,11 +186,30 @@ export function DevPointer() {
 
   useEffect(() => {
     trackerRef.current?.setSyntheticMode(synthMode);
-    // Reset filters so pinch / palm engage immediately after a mode toggle.
-    pipelineRef.current?.reset();
-  }, [synthMode]);
+    const pipeline = pipelineRef.current;
+    if (!pipeline) return;
+    const flushed = pipeline.flushActiveStroke();
+    if (flushed) publishCtrl(channel, flushed);
+    pipeline.reset();
+  }, [synthMode, channel]);
+
+  useEffect(() => {
+    return () => {
+      calibGenRef.current += 1;
+      if (calibRafRef.current) {
+        cancelAnimationFrame(calibRafRef.current);
+        calibRafRef.current = 0;
+      }
+    };
+  }, []);
 
   const startCalibrate = () => {
+    calibGenRef.current += 1;
+    if (calibRafRef.current) {
+      cancelAnimationFrame(calibRafRef.current);
+      calibRafRef.current = 0;
+    }
+    const gen = calibGenRef.current;
     setCalibMsg('Point at top-left of the stage and hold steady…');
     const points: Array<{ x: number; y: number }> = [];
     let holdStart: number | null = null;
@@ -175,9 +217,15 @@ export function DevPointer() {
     const started = performance.now();
 
     const tick = () => {
+      if (gen !== calibGenRef.current) return;
       const now = performance.now();
       if (now - started > 5000 && points.length < 2) {
         setCalibMsg('Calibration timed out — using auto zone.');
+        return;
+      }
+      if (!handPresentRef.current) {
+        holdStart = null;
+        calibRafRef.current = requestAnimationFrame(tick);
         return;
       }
       const tip = tipRef.current;
@@ -190,6 +238,7 @@ export function DevPointer() {
           if (points.length === 1) {
             setCalibMsg('Hold bottom-right…');
           } else {
+            if (gen !== calibGenRef.current) return;
             const zone = zoneFromTwoPoints(points[0]!, points[1]!);
             if (zone) {
               saveZone(zone);
@@ -207,9 +256,9 @@ export function DevPointer() {
         holdStart = null;
         last = { ...tip };
       }
-      requestAnimationFrame(tick);
+      calibRafRef.current = requestAnimationFrame(tick);
     };
-    requestAnimationFrame(tick);
+    calibRafRef.current = requestAnimationFrame(tick);
   };
 
   return (

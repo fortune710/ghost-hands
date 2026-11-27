@@ -137,30 +137,72 @@ function solveLinear8(A: number[][], b: number[]): number[] | null {
 }
 
 /**
- * Direct Linear Transform (DLT) homography from 4 point correspondences.
- * src = camera-space corners, dst = display corners (default unit square).
+ * Build the 8×8 DLT system for a fixed homogeneous scale index.
+ * `fixedIndex` in 0..8 is set to 1; the other 8 unknowns are solved.
  */
-export function homographyFromFourCorners(
+function buildHomographySystem(
   srcCorners: readonly [Point2D, Point2D, Point2D, Point2D],
-  dstCorners: readonly [Point2D, Point2D, Point2D, Point2D] = UNIT_SQUARE,
-): Homography | null {
+  dstCorners: readonly [Point2D, Point2D, Point2D, Point2D],
+  fixedIndex: number,
+): { A: number[][]; b: number[] } | null {
+  if (fixedIndex < 0 || fixedIndex > 8) return null;
   const A: number[][] = [];
   const b: number[] = [];
 
   for (let i = 0; i < 4; i++) {
     const s = srcCorners[i]!;
     const d = dstCorners[i]!;
-    // x' = (h0 x + h1 y + h2) / (h6 x + h7 y + 1)
-    // y' = (h3 x + h4 y + h5) / (h6 x + h7 y + 1)
-    A.push([s.x, s.y, 1, 0, 0, 0, -s.x * d.x, -s.y * d.x]);
-    b.push(d.x);
-    A.push([0, 0, 0, s.x, s.y, 1, -s.x * d.y, -s.y * d.y]);
-    b.push(d.y);
+    // Full rows before dropping the fixed coefficient:
+    // x': h0 s.x + h1 s.y + h2 + 0 + 0 + 0 - h6 s.x d.x - h7 s.y d.x - h8 d.x = 0
+    // y': 0 + 0 + 0 + h3 s.x + h4 s.y + h5 - h6 s.x d.y - h7 s.y d.y - h8 d.y = 0
+    const rowX = [s.x, s.y, 1, 0, 0, 0, -s.x * d.x, -s.y * d.x, -d.x];
+    const rowY = [0, 0, 0, s.x, s.y, 1, -s.x * d.y, -s.y * d.y, -d.y];
+    for (const full of [rowX, rowY]) {
+      const fixedCoeff = full[fixedIndex]!;
+      const row: number[] = [];
+      for (let j = 0; j < 9; j++) {
+        if (j === fixedIndex) continue;
+        row.push(full[j]!);
+      }
+      // Move fixed term (value 1) to the RHS: A h = -fixedCoeff
+      A.push(row);
+      b.push(-fixedCoeff);
+    }
   }
+  return { A, b };
+}
 
-  const h = solveLinear8(A, b);
-  if (!h) return null;
-  return [h[0]!, h[1]!, h[2]!, h[3]!, h[4]!, h[5]!, h[6]!, h[7]!, 1];
+function assembleHomography(h8: number[], fixedIndex: number): Homography {
+  const H = new Array<number>(9);
+  let k = 0;
+  for (let i = 0; i < 9; i++) {
+    if (i === fixedIndex) H[i] = 1;
+    else H[i] = h8[k++]!;
+  }
+  return H as unknown as Homography;
+}
+
+/**
+ * Direct Linear Transform (DLT) homography from 4 point correspondences.
+ * src = camera-space corners, dst = display corners (default unit square).
+ *
+ * Solves 8 DOF with H[8]=1 when possible; if singular, retries with other
+ * elements fixed to 1 (H[0], H[4], …).
+ */
+export function homographyFromFourCorners(
+  srcCorners: readonly [Point2D, Point2D, Point2D, Point2D],
+  dstCorners: readonly [Point2D, Point2D, Point2D, Point2D] = UNIT_SQUARE,
+): Homography | null {
+  // Prefer H[8]=1 (affine-friendly), then try other scale anchors.
+  const tryOrder = [8, 0, 4, 1, 2, 3, 5, 6, 7];
+  for (const fixed of tryOrder) {
+    const sys = buildHomographySystem(srcCorners, dstCorners, fixed);
+    if (!sys) continue;
+    const h = solveLinear8(sys.A, sys.b);
+    if (!h) continue;
+    return assembleHomography(h, fixed);
+  }
+  return null;
 }
 
 /** Apply homography H to a point (no clamp). */

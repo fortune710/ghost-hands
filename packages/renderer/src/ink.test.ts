@@ -71,6 +71,18 @@ describe('InkLayer', () => {
     expect(ink.clearWipeAlpha(100 + CLEAR_WIPE_MS + 1)).toBe(1);
   });
 
+  it('clear wipe removes only strokes present at wipe start', () => {
+    const ink = new InkLayer({ minStrokePx: 0, holdMs: 10_000, fadeMs: 10_000 });
+    ink.start('old', 0, 0, 0, '#fff');
+    ink.append('old', 1, 1, 1);
+    ink.end('old', 'free', 2);
+    ink.beginClearWipe(100);
+    ink.start('new', 0.2, 0.2, 150, '#0f0');
+    ink.append('new', 0.3, 0.3, 160);
+    expect(ink.prune(100 + CLEAR_WIPE_MS)).toBe(true);
+    expect(ink.all.map((s) => s.id)).toEqual(['new']);
+  });
+
   it('sets kind to arrow after end', () => {
     const ink = new InkLayer({ minStrokePx: 0 });
     ink.start('arr', 0.1, 0.1, 0, '#f00', 'free');

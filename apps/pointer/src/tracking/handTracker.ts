@@ -110,6 +110,8 @@ export function createHandTracker(opts: HandTrackerOptions = {}): HandTracker {
   let previewCanvas = opts.previewCanvas ?? null;
   let startedAt = 0;
   let onMouseMove: ((e: Event) => void) | null = null;
+  /** Bumped in stop()/useSynthetic() so in-flight start() aborts cleanly. */
+  let generation = 0;
 
   const emit = (sample: HandSample | null, inferMs: number) => {
     frames += 1;
@@ -143,6 +145,18 @@ export function createHandTracker(opts: HandTrackerOptions = {}): HandTracker {
       target.removeEventListener('mousemove', onMouseMove);
     }
     onMouseMove = null;
+  };
+
+  const releaseCamera = () => {
+    if (stream) {
+      for (const t of stream.getTracks()) t.stop();
+      stream = null;
+    }
+    if (videoEl) {
+      videoEl.srcObject = null;
+    }
+    landmarker?.close?.();
+    landmarker = null;
   };
 
   const tickSynthetic = () => {
@@ -217,10 +231,22 @@ export function createHandTracker(opts: HandTrackerOptions = {}): HandTracker {
     tickSynthetic();
   };
 
+  /** Tear down a late async start result when generation has moved on. */
+  const abandonLateStart = (late?: {
+    stream?: MediaStream | null;
+    landmarker?: HandLandmarkerLike | null;
+  }) => {
+    if (late?.stream) {
+      for (const t of late.stream.getTracks()) t.stop();
+    }
+    late?.landmarker?.close?.();
+  };
+
   return {
     async start() {
       if (running) return;
       running = true;
+      const gen = generation;
       startedAt = performance.now();
 
       if (opts.preferSynthetic) {
@@ -229,6 +255,7 @@ export function createHandTracker(opts: HandTrackerOptions = {}): HandTracker {
       }
 
       const modelOk = await probeModel();
+      if (gen !== generation) return;
       if (!modelOk) {
         startSynthetic();
         return;
@@ -236,6 +263,7 @@ export function createHandTracker(opts: HandTrackerOptions = {}): HandTracker {
 
       try {
         const vision = await import('@mediapipe/tasks-vision');
+        if (gen !== generation) return;
         const { FilesetResolver, HandLandmarker } = vision;
 
         let created: HandLandmarkerLike | null = null;
@@ -249,6 +277,10 @@ export function createHandTracker(opts: HandTrackerOptions = {}): HandTracker {
                 wasm,
                 delegate,
               );
+              if (gen !== generation) {
+                abandonLateStart({ landmarker: created });
+                return;
+              }
               break outer;
             } catch {
               created = null;
@@ -256,11 +288,14 @@ export function createHandTracker(opts: HandTrackerOptions = {}): HandTracker {
           }
         }
 
+        if (gen !== generation) {
+          abandonLateStart({ landmarker: created });
+          return;
+        }
         if (!created) {
           startSynthetic();
           return;
         }
-        landmarker = created;
 
         if (!videoEl) {
           videoEl = document.createElement('video');
@@ -269,7 +304,7 @@ export function createHandTracker(opts: HandTrackerOptions = {}): HandTracker {
           videoEl.autoplay = true;
         }
 
-        stream = await navigator.mediaDevices.getUserMedia({
+        const media = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: 'user',
             width: { ideal: 640 },
@@ -277,36 +312,44 @@ export function createHandTracker(opts: HandTrackerOptions = {}): HandTracker {
           },
           audio: false,
         });
+        if (gen !== generation) {
+          abandonLateStart({ stream: media, landmarker: created });
+          return;
+        }
+
+        landmarker = created;
+        stream = media;
         videoEl.srcObject = stream;
         await videoEl.play();
+        if (gen !== generation) {
+          abandonLateStart({ stream, landmarker });
+          stream = null;
+          landmarker = null;
+          if (videoEl) videoEl.srcObject = null;
+          return;
+        }
         source = 'camera';
         tickCamera();
       } catch {
         // Camera or MediaPipe failed → synthetic
-        if (stream) {
-          for (const t of stream.getTracks()) t.stop();
+        if (gen !== generation) {
+          abandonLateStart({ stream, landmarker });
           stream = null;
+          landmarker = null;
+          return;
         }
-        landmarker?.close?.();
-        landmarker = null;
+        releaseCamera();
         startSynthetic();
       }
     },
 
     stop() {
+      generation += 1;
       running = false;
       cancelAnimationFrame(raf);
       raf = 0;
       detachMouse();
-      if (stream) {
-        for (const t of stream.getTracks()) t.stop();
-        stream = null;
-      }
-      if (videoEl) {
-        videoEl.srcObject = null;
-      }
-      landmarker?.close?.();
-      landmarker = null;
+      releaseCamera();
       inferBusy = false;
     },
 
@@ -324,18 +367,13 @@ export function createHandTracker(opts: HandTrackerOptions = {}): HandTracker {
     },
 
     useSynthetic() {
+      generation += 1;
       if (!running) {
         source = 'synthetic';
         return;
       }
       cancelAnimationFrame(raf);
-      if (stream) {
-        for (const t of stream.getTracks()) t.stop();
-        stream = null;
-      }
-      if (videoEl) videoEl.srcObject = null;
-      landmarker?.close?.();
-      landmarker = null;
+      releaseCamera();
       startSynthetic();
     },
   };

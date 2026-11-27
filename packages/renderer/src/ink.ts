@@ -46,6 +46,8 @@ export class InkLayer {
   private readonly opts: InkRendererOptions;
   /** When set, strokes fade out over CLEAR_WIPE_MS then empty. */
   private clearWipeStartedAt: number | null = null;
+  /** Stroke ids present when the wipe began — newer strokes are kept. */
+  private clearWipeIds: Set<string> | null = null;
 
   constructor(opts: Partial<InkRendererOptions> = {}) {
     this.opts = { ...DEFAULTS, ...opts };
@@ -93,18 +95,33 @@ export class InkLayer {
   clear(): void {
     this.strokes = [];
     this.clearWipeStartedAt = null;
+    this.clearWipeIds = null;
   }
 
   /**
-   * Begin a 250ms clear wipe. Strokes remain until wipe completes, then empty.
+   * Begin a 250ms clear wipe. Strokes present at start remain until wipe
+   * completes; strokes started after the wipe began are kept.
    * `clearWipeAlpha(now)` goes 1 → 0 over CLEAR_WIPE_MS.
    */
   beginClearWipe(now: number): void {
     if (this.strokes.length === 0) {
       this.clearWipeStartedAt = null;
+      this.clearWipeIds = null;
       return;
     }
     this.clearWipeStartedAt = now;
+    this.clearWipeIds = new Set(this.strokes.map((s) => s.id));
+  }
+
+  private finishClearWipe(): void {
+    if (this.clearWipeIds) {
+      const doomed = this.clearWipeIds;
+      this.strokes = this.strokes.filter((s) => !doomed.has(s.id));
+    } else {
+      this.strokes = [];
+    }
+    this.clearWipeStartedAt = null;
+    this.clearWipeIds = null;
   }
 
   /** Alias for beginClearWipe — optional fade the renderer can drive. */
@@ -133,9 +150,7 @@ export class InkLayer {
   /** Finish wipe if elapsed; drop fully faded strokes. Returns whether anything remains. */
   prune(now: number): boolean {
     if (this.clearWipeStartedAt !== null && now - this.clearWipeStartedAt >= CLEAR_WIPE_MS) {
-      this.strokes = [];
-      this.clearWipeStartedAt = null;
-      return false;
+      this.finishClearWipe();
     }
 
     const life = this.opts.holdMs + this.opts.fadeMs;
@@ -157,16 +172,14 @@ export class InkLayer {
 
   draw(ctx: CanvasRenderingContext2D, now: number, width: number, height: number): void {
     const wipe = this.clearWipeAlpha(now);
-    if (wipe <= 0) {
-      if (this.clearWipeStartedAt !== null) {
-        this.strokes = [];
-        this.clearWipeStartedAt = null;
-      }
-      return;
+    if (wipe <= 0 && this.clearWipeStartedAt !== null) {
+      this.finishClearWipe();
     }
 
     for (const stroke of this.strokes) {
-      const alpha = this.alphaFor(stroke, now) * wipe;
+      const wiping =
+        this.clearWipeIds !== null && this.clearWipeIds.has(stroke.id);
+      const alpha = this.alphaFor(stroke, now) * (wiping ? wipe : 1);
       if (alpha <= 0 || stroke.points.length === 0) continue;
       ctx.save();
       ctx.globalAlpha = alpha * (stroke.kind === 'highlight' ? 0.4 : 0.85);

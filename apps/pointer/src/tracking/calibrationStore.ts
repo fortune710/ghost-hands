@@ -29,12 +29,24 @@ export function loadZone(): ActiveZone {
   return { ...DEFAULT_ACTIVE_ZONE };
 }
 
-export function saveZone(zone: ActiveZone): void {
-  localStorage.setItem(ZONE_STORAGE_KEY, JSON.stringify(zone));
+/** Persist zone; returns false if storage threw (callers still update in-memory). */
+export function saveZone(zone: ActiveZone): boolean {
+  try {
+    localStorage.setItem(ZONE_STORAGE_KEY, JSON.stringify(zone));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-export function resetZone(): void {
-  localStorage.removeItem(ZONE_STORAGE_KEY);
+/** Clear stored zone; returns false if storage threw. */
+export function resetZone(): boolean {
+  try {
+    localStorage.removeItem(ZONE_STORAGE_KEY);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Tip mapping currently always uses the stored (or default) active zone. */

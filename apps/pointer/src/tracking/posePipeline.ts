@@ -44,6 +44,9 @@ function nextStrokeId(): string {
 /**
  * Pointer-side pose pipeline:
  * LandmarkSmoother → classifyLandmarks → GestureFsm → TipSmoother → mapTip → PoseFrame.
+ *
+ * Sample `tMs` values must share an origin with this pipeline's clock
+ * (typically `performance.now() - startedAt` from HandTracker).
  */
 export class PosePipeline {
   private readonly landmarkSmoother = new LandmarkSmoother();
@@ -54,7 +57,8 @@ export class PosePipeline {
   private seq = 0;
   private strokeId: string | null = null;
   private strokePoints: StrokePoint[] = [];
-  private joinClockMs = performance.now();
+  /** Fixed clock origin — never reset, so absent/present samples stay aligned. */
+  private readonly clockOriginMs = performance.now();
 
   constructor(opts: PosePipelineOptions = {}) {
     this.mapping =
@@ -71,6 +75,28 @@ export class PosePipeline {
     this.displaySize = { w, h };
   }
 
+  /**
+   * If a stroke is active, classify and return a stroke_end event, then clear
+   * stroke state. Does not reset smoothers / FSM.
+   */
+  flushActiveStroke(tMs?: number): PipelineCtrlEvent | null {
+    if (!this.strokeId) return null;
+    const id = this.strokeId;
+    const kind = classifyStrokeEnd(this.strokePoints, {
+      displayWidth: this.displaySize.w,
+      displayHeight: this.displaySize.h,
+    });
+    this.strokeId = null;
+    this.strokePoints = [];
+    void tMs;
+    return { t: 'stroke_end', id, kind };
+  }
+
+  /**
+   * Reset filters / FSM / seq / stroke. Does not emit stroke_end — call
+   * {@link flushActiveStroke} first when the active stroke must be published.
+   * Clock origin is preserved.
+   */
   reset(): void {
     this.landmarkSmoother.reset();
     this.tipSmoother.reset();
@@ -78,7 +104,6 @@ export class PosePipeline {
     this.seq = 0;
     this.strokeId = null;
     this.strokePoints = [];
-    this.joinClockMs = performance.now();
   }
 
   /**
@@ -86,7 +111,8 @@ export class PosePipeline {
    */
   update(sample: HandSample | null): PosePipelineResult {
     const events: PipelineCtrlEvent[] = [];
-    const tMs = sample?.tMs ?? performance.now() - this.joinClockMs;
+    // Present samples use tracker tMs; absent samples use the shared clock.
+    const tMs = sample?.tMs ?? performance.now() - this.clockOriginMs;
     const tSeconds = tMs / 1000;
     const seq = this.seq++ & 0xffff;
 
@@ -121,7 +147,12 @@ export class PosePipeline {
       };
     }
 
-    const raw = sample!.landmarks.slice(0, 21).map((lm) => ({ x: lm.x, y: lm.y }));
+    // Pass full landmarks (including optional z) into smoother + classifier.
+    const raw = sample!.landmarks.slice(0, 21).map((lm) => ({
+      x: lm.x,
+      y: lm.y,
+      z: lm.z,
+    }));
     const smoothed = this.landmarkSmoother.smooth(tSeconds, raw);
     const classified = classifyLandmarks(smoothed, { leftHand: sample!.leftHand });
 
@@ -178,14 +209,7 @@ export class PosePipeline {
     events: PipelineCtrlEvent[],
   ): void {
     if (!transition.strokeEnd || !this.strokeId) return;
-    const id = this.strokeId;
-    const kind = classifyStrokeEnd(this.strokePoints, {
-      displayWidth: this.displaySize.w,
-      displayHeight: this.displaySize.h,
-    });
-    events.push({ t: 'stroke_end', id, kind });
-    this.strokeId = null;
-    this.strokePoints = [];
-    void tMs;
+    const flushed = this.flushActiveStroke(tMs);
+    if (flushed) events.push(flushed);
   }
 }

@@ -84,10 +84,12 @@ export function buildSyntheticLandmarks(
 
   if (mode === 'none') return landmarks;
 
-  // Wrist sits below the tip; palm faces camera (index MCP left of pinky for right hand).
+  // Wrist offset ≥0.2 from tip so index stays extended near screen edges.
+  // Prefer wrist below tip; if that would leave the frame, place wrist above.
+  const wristBelow = tipTarget.y + 0.22;
   const wrist: Vec2 = {
     x: clamp01(tipTarget.x + 0.02),
-    y: clamp01(tipTarget.y + 0.22),
+    y: clamp01(wristBelow <= 1 ? wristBelow : tipTarget.y - 0.22),
   };
   landmarks[0] = { x: wrist.x, y: wrist.y, z: 0 };
 

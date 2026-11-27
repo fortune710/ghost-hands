@@ -109,9 +109,14 @@ export class LandmarkSmoother {
 
   smooth(
     tSeconds: number,
-    landmarks: Array<{ x: number; y: number }>,
-  ): Array<{ x: number; y: number }> {
-    return landmarks.map((lm, i) => this.filters[i]!.filter(tSeconds, lm));
+    landmarks: Array<{ x: number; y: number; z?: number }>,
+  ): Array<{ x: number; y: number; z?: number }> {
+    return landmarks.map((lm, i) => {
+      const filtered = this.filters[i]!.filter(tSeconds, lm);
+      return lm.z !== undefined
+        ? { x: filtered.x, y: filtered.y, z: lm.z }
+        : { x: filtered.x, y: filtered.y };
+    });
   }
 
   reset(): void {

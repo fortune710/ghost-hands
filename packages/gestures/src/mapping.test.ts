@@ -129,4 +129,27 @@ describe('homography mapping', () => {
     expect(homoMapped.x).toBeCloseTo(0, 4);
     expect(homoMapped.y).toBeCloseTo(0, 4);
   });
+
+  it('solves degenerate H[8]=1 cases by fixing another element', () => {
+    // Corners that make the H[8]=1 system singular still map to the unit square.
+    const src = [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 1, y: 1 },
+      { x: 0, y: 1 },
+    ] as const;
+    const H = homographyFromFourCorners(src);
+    expect(H).not.toBeNull();
+    const dst = [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 1, y: 1 },
+      { x: 0, y: 1 },
+    ];
+    for (let i = 0; i < 4; i++) {
+      const p = applyHomography(H!, src[i]!);
+      expect(p.x).toBeCloseTo(dst[i]!.x, 4);
+      expect(p.y).toBeCloseTo(dst[i]!.y, 4);
+    }
+  });
 });

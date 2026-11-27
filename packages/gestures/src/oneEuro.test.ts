@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   LANDMARK_ONE_EURO,
+  LandmarkSmoother,
   OneEuroFilter2D,
   TIP_DEAD_ZONE,
   TIP_ONE_EURO,
@@ -97,5 +98,18 @@ describe('One-Euro tip smoothing', () => {
     tip.filter(0, { x: 0.5, y: 0.5 }, false);
     const moved = tip.filter(1 / 60, { x: 0.5 + 0.001, y: 0.5 }, false);
     expect(Math.abs(moved.x - 0.5)).toBeGreaterThan(0);
+  });
+
+  it('LandmarkSmoother preserves optional z while smoothing x/y', () => {
+    const smoother = new LandmarkSmoother();
+    const raw = Array.from({ length: 21 }, (_, i) => ({
+      x: 0.5,
+      y: 0.5,
+      z: i * 0.01,
+    }));
+    const out = smoother.smooth(0, raw);
+    expect(out).toHaveLength(21);
+    expect(out[8]!.z).toBeCloseTo(0.08, 8);
+    expect(out[8]!.x).toBeCloseTo(0.5, 5);
   });
 });

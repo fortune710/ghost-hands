@@ -99,19 +99,6 @@ export function DevReceiver() {
         { drawBackdrop },
       );
 
-      if (
-        pose?.handPresent &&
-        pose.gesture === Gesture.Pinch &&
-        currentStrokeId.current
-      ) {
-        renderer.ink.append(
-          currentStrokeId.current,
-          pose.tip.x,
-          pose.tip.y,
-          now,
-        );
-      }
-
       // Update fps from the render loop so background-tab throttling of
       // setState-on-message does not leave the readout stuck at 0.
       if (now - lastFpsAt.current >= 1000) {
@@ -142,6 +129,20 @@ export function DevReceiver() {
       if (parsed.pose) {
         latestPose.current = parsed.pose;
         framesRef.current += 1;
+        // Append ink on message so background-tab rAF suspension does not
+        // drop pinch stroke points.
+        if (
+          parsed.pose.handPresent &&
+          parsed.pose.gesture === Gesture.Pinch &&
+          currentStrokeId.current
+        ) {
+          renderer.ink.append(
+            currentStrokeId.current,
+            parsed.pose.tip.x,
+            parsed.pose.tip.y,
+            performance.now(),
+          );
+        }
       }
       if (parsed.ctrl) handleCtrl(parsed.ctrl);
     };
