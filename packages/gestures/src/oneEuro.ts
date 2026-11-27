@@ -9,11 +9,22 @@ export interface OneEuroParams {
   dCutoff: number;
 }
 
-const DEFAULTS: OneEuroParams = {
+/** Landmark defaults (PRD §6.2). */
+export const LANDMARK_ONE_EURO: OneEuroParams = {
   minCutoff: 1.0,
   beta: 0.007,
   dCutoff: 1.0,
 };
+
+/** Index fingertip (L8) tip filter (PRD §6.2). */
+export const TIP_ONE_EURO: OneEuroParams = {
+  minCutoff: 1.7,
+  beta: 0.02,
+  dCutoff: 1.0,
+};
+
+/** Default tip dead zone in normalized units while gesture = point. */
+export const TIP_DEAD_ZONE = 0.002;
 
 function smoothingFactor(te: number, cutoff: number): number {
   const r = 2 * Math.PI * cutoff * te;
@@ -63,9 +74,11 @@ class OneEuroAxis {
 export class OneEuroFilter2D {
   private readonly x: OneEuroAxis;
   private readonly y: OneEuroAxis;
+  readonly params: OneEuroParams;
 
   constructor(params: Partial<OneEuroParams> = {}) {
-    const merged = { ...DEFAULTS, ...params };
+    const merged = { ...LANDMARK_ONE_EURO, ...params };
+    this.params = merged;
     this.x = new OneEuroAxis(merged);
     this.y = new OneEuroAxis(merged);
   }
@@ -88,7 +101,10 @@ export class LandmarkSmoother {
   private readonly filters: OneEuroFilter2D[];
 
   constructor(params: Partial<OneEuroParams> = {}) {
-    this.filters = Array.from({ length: 21 }, () => new OneEuroFilter2D(params));
+    this.filters = Array.from(
+      { length: 21 },
+      () => new OneEuroFilter2D({ ...LANDMARK_ONE_EURO, ...params }),
+    );
   }
 
   smooth(
@@ -100,5 +116,58 @@ export class LandmarkSmoother {
 
   reset(): void {
     for (const f of this.filters) f.reset();
+  }
+}
+
+export interface TipSmootherOptions {
+  /** Override tip One-Euro params. */
+  params?: Partial<OneEuroParams>;
+  /** Dead zone radius in normalized units (default 0.002). */
+  deadZone?: number;
+}
+
+/**
+ * Tip (L8) smoother: tip One-Euro params + optional dead zone while pointing.
+ */
+export class TipSmoother {
+  private readonly euro: OneEuroFilter2D;
+  private readonly deadZone: number;
+  private lastOutput: { x: number; y: number } | null = null;
+
+  constructor(opts: TipSmootherOptions = {}) {
+    this.euro = new OneEuroFilter2D({ ...TIP_ONE_EURO, ...opts.params });
+    this.deadZone = opts.deadZone ?? TIP_DEAD_ZONE;
+  }
+
+  get params(): OneEuroParams {
+    return this.euro.params;
+  }
+
+  /**
+   * @param enableDeadZone — when true (e.g. gesture = point), hold tip still
+   *   if the filtered delta is within the dead zone.
+   */
+  filter(
+    tSeconds: number,
+    point: { x: number; y: number },
+    enableDeadZone = false,
+  ): { x: number; y: number } {
+    const smoothed = this.euro.filter(tSeconds, point);
+
+    if (enableDeadZone && this.lastOutput !== null) {
+      const dx = smoothed.x - this.lastOutput.x;
+      const dy = smoothed.y - this.lastOutput.y;
+      if (Math.hypot(dx, dy) < this.deadZone) {
+        return { x: this.lastOutput.x, y: this.lastOutput.y };
+      }
+    }
+
+    this.lastOutput = { x: smoothed.x, y: smoothed.y };
+    return this.lastOutput;
+  }
+
+  reset(): void {
+    this.euro.reset();
+    this.lastOutput = null;
   }
 }

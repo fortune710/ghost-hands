@@ -144,7 +144,8 @@ export class GestureFsm {
 
     return {
       state: this.state,
-      gesture: this.toWire(),
+      // CLEAR settles immediately; still report Palm on the clear transition.
+      gesture: clear ? Gesture.Palm : this.toWire(),
       strokeStart: strokeStart || undefined,
       strokeEnd: strokeEnd || undefined,
       clear: clear || undefined,
