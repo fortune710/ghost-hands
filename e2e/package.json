@@ -1,0 +1,8 @@
+{
+  "name": "@ghost-hands/e2e",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "test": "echo 'e2e suites land in M2' && exit 0"
+  }
+}

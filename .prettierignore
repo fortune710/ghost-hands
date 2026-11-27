@@ -1,0 +1,10 @@
+node_modules
+dist
+build
+.turbo
+coverage
+backend/api/.venv
+apps/desktop/src-tauri/target
+*.generated.*
+packages/protocol/src/generated
+backend/api/app/protocol_gen

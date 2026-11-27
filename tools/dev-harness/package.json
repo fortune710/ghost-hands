@@ -1,0 +1,13 @@
+{
+  "name": "@ghost-hands/dev-harness",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Harness routes live under apps/pointer (/dev/pointer, /dev/receiver)",
+  "scripts": {
+    "dev": "cd ../../apps/pointer && bun run dev",
+    "typecheck": "echo ok",
+    "lint": "echo ok",
+    "test": "echo ok",
+    "build": "echo ok"
+  }
+}

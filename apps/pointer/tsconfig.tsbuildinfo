@@ -1,0 +1,1 @@
+{"root":["./src/App.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/dev/DevPointer.tsx","./src/dev/DevReceiver.tsx","./src/dev/harnessChannel.ts","./src/routes/Calibrate.tsx","./src/routes/Join.tsx","./src/routes/JoinCode.tsx","./src/routes/Live.tsx"],"version":"5.9.3"}

@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ghosthands.fortunealebiosu.dev/schema/ctrl.json",
+  "title": "GhostHandsCtrl",
+  "description": "Reliable DataChannel control messages (pointer <-> sharer)",
+  "type": "object",
+  "definitions": {
+    "Hello": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "name", "color", "proto", "caps", "enc"],
+      "properties": {
+        "t": { "const": "hello" },
+        "name": { "type": "string", "maxLength": 24 },
+        "color": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "proto": { "type": "integer", "const": 1 },
+        "caps": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["pinch", "palm", "calib4"] }
+        },
+        "enc": { "type": "string", "enum": ["bin1", "json"] }
+      }
+    },
+    "StrokeStart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "id", "x", "y", "tool"],
+      "properties": {
+        "t": { "const": "stroke_start" },
+        "id": { "type": "string" },
+        "x": { "type": "number", "minimum": 0, "maximum": 1 },
+        "y": { "type": "number", "minimum": 0, "maximum": 1 },
+        "tool": { "type": "string", "enum": ["highlight", "arrow"] }
+      }
+    },
+    "StrokeEnd": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "id", "kind"],
+      "properties": {
+        "t": { "const": "stroke_end" },
+        "id": { "type": "string" },
+        "kind": { "type": "string", "enum": ["arrow", "free", "discard"] }
+      }
+    },
+    "Clear": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "scope"],
+      "properties": {
+        "t": { "const": "clear" },
+        "scope": { "type": "string", "enum": ["mine"] }
+      }
+    },
+    "CalibTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "corner"],
+      "properties": {
+        "t": { "const": "calib_target" },
+        "corner": {
+          "oneOf": [
+            { "type": "string", "enum": ["tl", "tr", "br", "bl"] },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "Stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "fps", "infer_ms", "delegate"],
+      "properties": {
+        "t": { "const": "stats" },
+        "fps": { "type": "number" },
+        "infer_ms": { "type": "number" },
+        "delegate": { "type": "string" }
+      }
+    },
+    "Pong": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "ts"],
+      "properties": {
+        "t": { "const": "pong" },
+        "ts": { "type": "number" }
+      }
+    },
+    "Bye": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t"],
+      "properties": { "t": { "const": "bye" } }
+    },
+    "Welcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "pointerId", "color", "display"],
+      "properties": {
+        "t": { "const": "welcome" },
+        "pointerId": { "type": "string" },
+        "color": { "type": "string" },
+        "display": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["w", "h", "scale"],
+          "properties": {
+            "w": { "type": "number" },
+            "h": { "type": "number" },
+            "scale": { "type": "number" }
+          }
+        }
+      }
+    },
+    "DisplayChanged": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "display"],
+      "properties": {
+        "t": { "const": "display_changed" },
+        "display": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["w", "h", "scale"],
+          "properties": {
+            "w": { "type": "number" },
+            "h": { "type": "number" },
+            "scale": { "type": "number" }
+          }
+        }
+      }
+    },
+    "Paused": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "value"],
+      "properties": {
+        "t": { "const": "paused" },
+        "value": { "type": "boolean" }
+      }
+    },
+    "Cleared": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "scope"],
+      "properties": {
+        "t": { "const": "cleared" },
+        "scope": { "type": "string", "enum": ["all", "mine"] }
+      }
+    },
+    "Kicked": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t"],
+      "properties": { "t": { "const": "kicked" } }
+    },
+    "Ping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "ts"],
+      "properties": {
+        "t": { "const": "ping" },
+        "ts": { "type": "number" }
+      }
+    }
+  }
+}

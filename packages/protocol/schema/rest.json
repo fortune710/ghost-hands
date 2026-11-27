@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ghosthands.fortunealebiosu.dev/schema/rest.json",
+  "title": "GhostHandsRest",
+  "description": "REST API request/response shapes for Ghost Hands signaling backend",
+  "type": "object",
+  "definitions": {
+    "ClientInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["app_version", "os"],
+      "properties": {
+        "app_version": { "type": "string", "maxLength": 32 },
+        "os": { "type": "string", "enum": ["macos", "windows", "linux", "web"] }
+      }
+    },
+    "IceServer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["urls"],
+      "properties": {
+        "urls": {
+          "oneOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+          ]
+        },
+        "username": { "type": "string" },
+        "credential": { "type": "string" }
+      }
+    },
+    "CreateSessionRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "host_name": { "type": "string", "maxLength": 24 },
+        "client": { "$ref": "#/definitions/ClientInfo" }
+      }
+    },
+    "CreateSessionResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "session_id",
+        "code",
+        "display_code",
+        "join_url",
+        "host_token",
+        "expires_at",
+        "max_pointers",
+        "ice_servers",
+        "ice_ttl_s"
+      ],
+      "properties": {
+        "session_id": { "type": "string" },
+        "code": { "type": "string", "minLength": 6, "maxLength": 6 },
+        "display_code": { "type": "string" },
+        "join_url": { "type": "string", "format": "uri" },
+        "host_token": { "type": "string" },
+        "expires_at": { "type": "string", "format": "date-time" },
+        "max_pointers": { "type": "integer", "minimum": 1 },
+        "ice_servers": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/IceServer" }
+        },
+        "ice_ttl_s": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "SessionStatusResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "type": "string", "enum": ["waiting", "live", "ended"] },
+        "host_name": { "type": "string", "maxLength": 24 }
+      }
+    },
+    "IceServersResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ice_servers", "ice_ttl_s"],
+      "properties": {
+        "ice_servers": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/IceServer" }
+        },
+        "ice_ttl_s": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "ApiError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["error"],
+      "properties": {
+        "error": {
+          "type": "string",
+          "enum": [
+            "ROOM_NOT_FOUND",
+            "ROOM_EXPIRED",
+            "ROOM_FULL",
+            "RATE_LIMITED",
+            "PROTO_MISMATCH",
+            "BAD_MESSAGE",
+            "UNAUTHORIZED"
+          ]
+        },
+        "msg": { "type": "string" }
+      }
+    }
+  }
+}

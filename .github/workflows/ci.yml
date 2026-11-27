@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  js:
+    name: JS (bun)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.5
+      - name: Install
+        run: bun install --frozen-lockfile
+      - name: Codegen
+        run: bun run --filter @ghost-hands/protocol codegen
+      - name: Typecheck
+        run: bun run typecheck
+      - name: Lint
+        run: bun run lint
+      - name: Test
+        run: bun run test
+
+  codegen-drift:
+    name: Protocol codegen drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.5
+      - run: bun install --frozen-lockfile
+      - name: Regenerate and diff
+        run: |
+          bun run --filter @ghost-hands/protocol codegen
+          if ! git diff --quiet -- packages/protocol/src/generated backend/api/app/protocol_gen; then
+            echo "codegen drift — run just codegen and commit"
+            git --no-pager diff -- packages/protocol/src/generated backend/api/app/protocol_gen
+            exit 1
+          fi
+
+  python:
+    name: Python (uv)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Sync
+        run: uv sync
+      - name: Ruff
+        run: uv run ruff check . && uv run ruff format --check .
+      - name: Mypy
+        run: uv run mypy app
+      - name: Pytest
+        run: uv run pytest
+
+  rust:
+    name: Rust (desktop check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.90.0"
+          components: clippy,rustfmt
+      - name: Install WebKit deps (Tauri Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - name: Cargo check
+        working-directory: apps/desktop/src-tauri
+        run: cargo check
+      # Overlay click-through + WebRTC DataChannel spike still need real macOS/Windows hardware.
