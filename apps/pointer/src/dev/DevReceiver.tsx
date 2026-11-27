@@ -111,6 +111,23 @@ export function DevReceiver() {
           now,
         );
       }
+
+      // Update fps from the render loop so background-tab throttling of
+      // setState-on-message does not leave the readout stuck at 0.
+      if (now - lastFpsAt.current >= 1000) {
+        const g = pose
+          ? (GESTURE_LABEL[pose.gesture] ?? 'NONE')
+          : 'NONE';
+        setStatus((s) => ({
+          ...s,
+          fps: framesRef.current,
+          gesture: g,
+          name: meta.name,
+          color: meta.color,
+        }));
+        framesRef.current = 0;
+        lastFpsAt.current = now;
+      }
     };
     rafRef.current = requestAnimationFrame(loop);
 
@@ -121,28 +138,10 @@ export function DevReceiver() {
           name: parsed.hello.name,
           color: parsed.hello.color,
         };
-        setStatus((s) => ({
-          ...s,
-          name: parsed.hello!.name,
-          color: parsed.hello!.color,
-        }));
       }
       if (parsed.pose) {
         latestPose.current = parsed.pose;
         framesRef.current += 1;
-        const g = GESTURE_LABEL[parsed.pose.gesture] ?? 'NONE';
-        const now = performance.now();
-        if (now - lastFpsAt.current >= 1000) {
-          setStatus((s) => ({
-            ...s,
-            fps: framesRef.current,
-            gesture: g,
-          }));
-          framesRef.current = 0;
-          lastFpsAt.current = now;
-        } else {
-          setStatus((s) => ({ ...s, gesture: g }));
-        }
       }
       if (parsed.ctrl) handleCtrl(parsed.ctrl);
     };
