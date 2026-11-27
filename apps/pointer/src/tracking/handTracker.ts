@@ -35,7 +35,7 @@ const CDN_WASM =
 
 const MIN_HAND_DETECTION = 0.6;
 const MIN_HAND_PRESENCE = 0.6;
-const MIN_TRACKING = 0.6;
+const MIN_TRACKING = 0.5;
 
 type HandLandmarkerLike = {
   detectForVideo: (

@@ -84,6 +84,11 @@ export class InkLayer {
     }
   }
 
+  /** Drop a stroke immediately (ctrl stroke_end kind=discard). */
+  discard(id: string): void {
+    this.strokes = this.strokes.filter((s) => s.id !== id);
+  }
+
   /** Immediate clear — strokes emptied now. */
   clear(): void {
     this.strokes = [];

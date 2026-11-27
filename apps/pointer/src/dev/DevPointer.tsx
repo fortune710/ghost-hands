@@ -157,10 +157,14 @@ export function DevPointer() {
       tracker.stop();
       trackerRef.current = null;
     };
-  }, [live, inputMode, channel, synthMode]);
+    // synthMode is applied via the effect below so mode switches stay snappy
+    // without restarting the camera / landmarker.
+  }, [live, inputMode, channel]);
 
   useEffect(() => {
     trackerRef.current?.setSyntheticMode(synthMode);
+    // Reset filters so pinch / palm engage immediately after a mode toggle.
+    pipelineRef.current?.reset();
   }, [synthMode]);
 
   const startCalibrate = () => {

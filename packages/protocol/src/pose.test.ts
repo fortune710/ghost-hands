@@ -66,4 +66,43 @@ describe('pose codec', () => {
     expect(bytes.every((b, i) => (i < 2 ? true : b === bytes[i]))).toBe(true);
     expect(bytes.slice(12).every((b) => b === 0)).toBe(true);
   });
+
+  it('clamps out-of-range tip and landmark coordinates to [0,1]', () => {
+    const landmarks = zeroLandmarks();
+    landmarks[0] = { x: -0.5, y: 1.5 };
+    landmarks[8] = { x: 2, y: -1 };
+    const decoded = decodePose(
+      encodePose(
+        sampleFrame({
+          tip: { x: -0.25, y: 1.25 },
+          landmarks,
+        }),
+      ),
+    );
+    expect(decoded.tip.x).toBe(0);
+    expect(decoded.tip.y).toBe(1);
+    expect(decoded.landmarks[0]!.x).toBe(0);
+    expect(decoded.landmarks[0]!.y).toBe(1);
+    expect(decoded.landmarks[8]!.x).toBe(1);
+    expect(decoded.landmarks[8]!.y).toBe(0);
+  });
+
+  it('round-trips all gesture flag values', () => {
+    for (const gesture of [Gesture.None, Gesture.Point, Gesture.Pinch, Gesture.Palm, Gesture.Fist]) {
+      const decoded = decodePose(encodePose(sampleFrame({ gesture })));
+      expect(decoded.gesture).toBe(gesture);
+    }
+  });
+
+  it('rejects unknown pose version', () => {
+    const bytes = encodePose(sampleFrame());
+    bytes[0] = 99;
+    expect(() => decodePose(bytes)).toThrow(/unknown pose version/);
+  });
+
+  it('rejects wrong landmark count on encode', () => {
+    const frame = sampleFrame();
+    frame.landmarks = frame.landmarks.slice(0, 10);
+    expect(() => encodePose(frame)).toThrow(/expected 21 landmarks/);
+  });
 });

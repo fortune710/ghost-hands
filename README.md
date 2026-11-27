@@ -53,16 +53,17 @@ Monorepo scaffold, protocol codegen, BroadcastChannel harness, FastAPI skeleton,
 | uv: Ruff, mypy, pytest | WebRTC DataChannel inside WKWebView + WebView2 ↔ Chrome |
 | Cargo check where feasible (Linux) | Decision to keep webview RTC or fall back to `webrtc-rs` (Q3) |
 
-### M1 — pointer tracking (in progress)
+### M1 — pointer tracking + gestures
 
-On-device MediaPipe Hand Landmarker in `apps/pointer`, synthetic demo fallback, PosePipeline (smooth → classify → FSM → map), and a two-tab harness that can underline code on the mock VS Code backdrop.
+On-device MediaPipe Hand Landmarker in `apps/pointer`, synthetic demo fallback, PosePipeline (smooth → classify → FSM → map), Canvas2D renderer, and a two-tab harness that can underline code on the mock VS Code backdrop.
 
-| Done | Still open |
+| Done | Deferred |
 |---|---|
-| `HandTracker` + synthetic / camera / mouse modes | WebRTC DataChannel offerer (M2) |
-| `PosePipeline` + stroke ctrl over BroadcastChannel | Production calibration driven by sharer `calib_target` (M4) |
-| Dev harness pinch → ink underline / palm clear | Desktop overlay consuming live poses |
-| Optional 2-point / 4-corner AABB calibrate UI | Homography mapping end-to-end |
+| 96 B pose codec + schema codegen (zero drift) | WebRTC DataChannel offerer (M2) |
+| One-Euro, gesture FSM, 600 ms arrow snap, 2-point / 4-corner mapping | Production calibration via sharer `calib_target` (M4 polish) |
+| Canvas2D ghost hand + fading ink / arrows / clear wipe | Desktop overlay consuming live poses (M3) |
+| `HandTracker` + synthetic / camera / mouse harness | Homography end-to-end in Live UI (library ready) |
+| `/dev/pointer` → `/dev/receiver` at 30–60 fps | |
 
 ## Environments
 

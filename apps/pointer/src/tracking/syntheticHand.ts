@@ -129,8 +129,8 @@ export function buildSyntheticLandmarks(
       z: 0,
     };
     const thumbTip = {
-      x: tipTarget.x - 0.012,
-      y: tipTarget.y + 0.008,
+      x: tipTarget.x - 0.006,
+      y: tipTarget.y + 0.004,
       z: 0,
     };
     landmarks[2] = {

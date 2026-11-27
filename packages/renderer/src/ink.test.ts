@@ -90,6 +90,14 @@ describe('InkLayer', () => {
     }
     expect(ink.all).toHaveLength(50);
   });
+
+  it('discard removes a stroke immediately', () => {
+    const ink = new InkLayer({ minStrokePx: 0 });
+    ink.start('s1', 0, 0, 0, '#fff');
+    ink.append('s1', 0.5, 0.5, 10);
+    ink.discard('s1');
+    expect(ink.all).toHaveLength(0);
+  });
 });
 
 describe('pathLengthPx', () => {

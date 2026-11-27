@@ -66,12 +66,11 @@ export function DevReceiver() {
           'highlight',
         );
       } else if (ctrl.t === 'stroke_end') {
-        // discard / short strokes are dropped by InkLayer.end min-length check
-        renderer.ink.end(
-          ctrl.id,
-          ctrl.kind === 'discard' ? 'free' : ctrl.kind,
-          now,
-        );
+        if (ctrl.kind === 'discard') {
+          renderer.ink.discard(ctrl.id);
+        } else {
+          renderer.ink.end(ctrl.id, ctrl.kind, now);
+        }
         if (currentStrokeId.current === ctrl.id) currentStrokeId.current = null;
       } else if (ctrl.t === 'clear') {
         renderer.clearInk(now);
