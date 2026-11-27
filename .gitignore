@@ -25,3 +25,7 @@ test-results/
 .idea/
 .vscode/
 
+# MediaPipe WASM is ~33MB — copy from node_modules (see apps/pointer/public/models/README.md).
+# The float16 hand_landmarker.task (~7.5MB) is committed for offline camera mode.
+apps/pointer/public/models/wasm/
+

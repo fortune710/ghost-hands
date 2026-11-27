@@ -130,3 +130,121 @@ button.ghost {
   font-size: 0.85rem;
   color: var(--muted);
 }
+
+.mode-row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.preview-wrap {
+  position: relative;
+  width: 100%;
+  max-width: 960px;
+}
+
+.preview-wrap .stage,
+.preview-wrap .preview-canvas {
+  display: block;
+  width: 100%;
+}
+
+.preview-video {
+  display: none;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+  border-radius: 8px;
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.preview-video.show {
+  display: block;
+}
+
+.gesture-badge {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  background: #0b1016cc;
+  border: 1px solid #334155;
+  color: var(--fg);
+}
+
+.gesture-badge.gesture-point {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.gesture-badge.gesture-pinch {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.gesture-badge.gesture-clear,
+.gesture-badge.gesture-palm {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.minimap {
+  position: absolute;
+  bottom: 0.75rem;
+  right: 0.75rem;
+  width: 96px;
+  height: 60px;
+  background: #0b1016aa;
+  border: 1px solid #334155;
+  border-radius: 4px;
+}
+
+.minimap-tip {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.calib-target {
+  position: absolute;
+  top: 0.75rem;
+  left: 0.75rem;
+  min-width: 2rem;
+  text-align: center;
+  padding: 0.35rem 0.5rem;
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  background: #0b1016cc;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.75rem 0 1rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.live-preview {
+  margin-bottom: 1rem;
+}
+
+.page.harness {
+  max-width: 1000px;
+}

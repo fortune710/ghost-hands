@@ -40,9 +40,11 @@ Join URLs: `https://ghosthands.fortunealebiosu.dev/join/<code>` (staging: `stagi
 - **Pose payload** — 96 B, 21×`(x,y)` + gesture flags; no `z`, no video upload.
 - **Hosting** — pointer on Vercel; FastAPI on Fortune’s VPS behind shared nginx (`backend/api/deploy/nginx-ghosthands.conf`).
 
-## Milestone M0 status
+## Milestone status
 
-This repo kickoff delivers the monorepo scaffold, protocol codegen, BroadcastChannel harness, FastAPI skeleton, CI, and Tauri overlay/WebRTC spike **harnesses**.
+### M0 — scaffold
+
+Monorepo scaffold, protocol codegen, BroadcastChannel harness, FastAPI skeleton, CI, and Tauri overlay/WebRTC spike harnesses.
 
 | Verified in CI / Linux VM | Needs real macOS / Windows |
 |---|---|
@@ -50,6 +52,17 @@ This repo kickoff delivers the monorepo scaffold, protocol codegen, BroadcastCha
 | `just codegen` + drift check | Overlay visible in Zoom / Meet / OBS capture |
 | uv: Ruff, mypy, pytest | WebRTC DataChannel inside WKWebView + WebView2 ↔ Chrome |
 | Cargo check where feasible (Linux) | Decision to keep webview RTC or fall back to `webrtc-rs` (Q3) |
+
+### M1 — pointer tracking (in progress)
+
+On-device MediaPipe Hand Landmarker in `apps/pointer`, synthetic demo fallback, PosePipeline (smooth → classify → FSM → map), and a two-tab harness that can underline code on the mock VS Code backdrop.
+
+| Done | Still open |
+|---|---|
+| `HandTracker` + synthetic / camera / mouse modes | WebRTC DataChannel offerer (M2) |
+| `PosePipeline` + stroke ctrl over BroadcastChannel | Production calibration driven by sharer `calib_target` (M4) |
+| Dev harness pinch → ink underline / palm clear | Desktop overlay consuming live poses |
+| Optional 2-point / 4-corner AABB calibrate UI | Homography mapping end-to-end |
 
 ## Environments
 
