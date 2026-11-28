@@ -1,0 +1,30 @@
+# Ghost Hands API — production-ish compose for Fortune's VPS.
+# Usage (on the VPS):
+#   cd /opt/ghost-hands/backend/api
+#   cp ../../.env.example .env   # fill GH_* secrets
+#   docker compose up -d --build
+#
+# Nginx on the shared ingress proxies api.ghosthands.fortunealebiosu.dev → 127.0.0.1:8000
+# (see deploy/nginx-ghosthands.conf). Optional coturn: deploy/coturn.conf.template
+#
+# Only bind/host defaults are forced here. URL/CORS/TURN values come from `.env`
+# so staging overrides are honored (Compose `environment` beats `env_file`).
+
+services:
+  api:
+    build: .
+    image: ghosthands-api:latest
+    container_name: ghosthands-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      GH_HOST: 0.0.0.0
+      GH_PORT: "8000"
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 15s
+      timeout: 3s
+      retries: 5

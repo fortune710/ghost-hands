@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request, Response
 
 router = APIRouter(tags=["health"])
 
@@ -9,11 +9,17 @@ async def healthz() -> dict[str, str]:
 
 
 @router.get("/readyz")
-async def readyz() -> dict[str, str]:
+async def readyz(request: Request) -> dict[str, str]:
+    # In-memory store is always ready for MVP.
+    _ = request.app.state.store
     return {"status": "ready"}
 
 
 @router.get("/metrics")
-async def metrics() -> str:
-    # Prometheus text exposition scaffold — real counters in M2.
-    return "# HELP ghosthands_up 1 if process is up\n# TYPE ghosthands_up gauge\nghosthands_up 1\n"
+async def metrics(request: Request) -> Response:
+    metrics_obj = request.app.state.metrics
+    store = request.app.state.store
+    registry = request.app.state.registry
+    active = len(await store.list_active())
+    body = metrics_obj.render_prometheus(active, registry.ws_count)
+    return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")

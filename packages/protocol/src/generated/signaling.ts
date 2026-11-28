@@ -173,6 +173,13 @@ export interface HostReconnecting {
 }
 /**
  * This interface was referenced by `GhostHandsSignaling`'s JSON-Schema
+ * via the `definition` "HostReady".
+ */
+export interface HostReady {
+  t: 'host_ready';
+}
+/**
+ * This interface was referenced by `GhostHandsSignaling`'s JSON-Schema
  * via the `definition` "SessionEnded".
  */
 export interface SessionEnded {

@@ -179,6 +179,12 @@
       "required": ["t"],
       "properties": { "t": { "const": "host_reconnecting" } }
     },
+    "HostReady": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t"],
+      "properties": { "t": { "const": "host_ready" } }
+    },
     "SessionEnded": {
       "type": "object",
       "additionalProperties": false,

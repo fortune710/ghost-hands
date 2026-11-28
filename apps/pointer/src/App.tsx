@@ -5,6 +5,7 @@ import { Live } from './routes/Live';
 import { Calibrate } from './routes/Calibrate';
 import { DevPointer } from './dev/DevPointer';
 import { DevReceiver } from './dev/DevReceiver';
+import { NetworkHost } from './dev/NetworkHost';
 
 export function App() {
   return (
@@ -16,6 +17,7 @@ export function App() {
       <Route path="/calibrate" element={<Calibrate />} />
       <Route path="/dev/pointer" element={<DevPointer />} />
       <Route path="/dev/receiver" element={<DevReceiver />} />
+      <Route path="/dev/host" element={<NetworkHost />} />
       <Route path="*" element={<Navigate to="/join" replace />} />
     </Routes>
   );

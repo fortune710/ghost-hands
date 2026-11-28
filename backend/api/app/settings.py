@@ -20,7 +20,8 @@ class Settings(BaseSettings):
     turn_urls: str = ""
     turn_secret: str = ""
     cors_origins: str = (
-        "http://localhost:5173,http://localhost:1420,"
+        "http://localhost:5173,http://127.0.0.1:5173,"
+        "http://localhost:1420,http://127.0.0.1:1420,"
         "https://ghosthands.fortunealebiosu.dev,"
         "https://staging.ghosthands.fortunealebiosu.dev"
     )

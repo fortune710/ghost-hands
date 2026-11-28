@@ -9,3 +9,7 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+interface Window {
+  __GH_LATENCY__?: { p50: number };
+}

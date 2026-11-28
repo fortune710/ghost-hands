@@ -1,10 +1,11 @@
-# E2E (Playwright)
+# E2E
 
-Pointer ↔ headless receiver over real signaling + WebRTC.
+Playwright suites against real signaling land here.
 
-Scaffold only in M0. Contract + Playwright suites land in M2 once signaling relay and the pointer offerer are wired.
+For M2 local smoke (API + two browser peers on loopback):
 
-```bash
-# future
-# bunx playwright test
-```
+1. Start API: `cd backend/api && uv run uvicorn app.main:app --port 8000`
+2. Start pointer: `cd apps/pointer && bun run dev`
+3. Open `/dev/host` and `/join/<code>` in two tabs (or use a Playwright script against those URLs).
+
+See `docs/latency-and-network-tests.md` for latency + two-network / TURN-only manual tests.
