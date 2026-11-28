@@ -1,6 +1,6 @@
 /**
- * Active-zone mapping (PRD §4.3 / §6.4).
- * Default: center ~70% of camera frame → full display.
+ * Active-zone mapping + 4-point homography (PRD §4.3 / §6.4).
+ * Pure TypeScript, no DOM deps.
  */
 
 export interface ActiveZone {
@@ -9,6 +9,28 @@ export interface ActiveZone {
   x1: number;
   y1: number;
 }
+
+export interface Point2D {
+  x: number;
+  y: number;
+}
+
+/** Row-major 3×3 homography matrix. */
+export type Homography = readonly [
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+];
+
+export type TipMapping =
+  | { kind: 'zone'; zone: ActiveZone }
+  | { kind: 'homography'; H: Homography };
 
 /** Default auto-mapping zone: center ~70% (0.15..0.85 on each axis). */
 export const DEFAULT_ACTIVE_ZONE: ActiveZone = {
@@ -26,9 +48,9 @@ export function clamp01(v: number): number {
 
 /** Map a normalized camera-space point through zone Z into display space [0,1]. */
 export function mapToDisplay(
-  point: { x: number; y: number },
+  point: Point2D,
   zone: ActiveZone = DEFAULT_ACTIVE_ZONE,
-): { x: number; y: number } {
+): Point2D {
   const w = zone.x1 - zone.x0;
   const h = zone.y1 - zone.y0;
   if (w <= 0 || h <= 0) {
@@ -48,10 +70,7 @@ export function isValidZone(zone: ActiveZone): boolean {
 }
 
 /** Axis-aligned zone from 2 calibration points (top-left + bottom-right). */
-export function zoneFromTwoPoints(
-  tl: { x: number; y: number },
-  br: { x: number; y: number },
-): ActiveZone | null {
+export function zoneFromTwoPoints(tl: Point2D, br: Point2D): ActiveZone | null {
   const zone: ActiveZone = {
     x0: Math.min(tl.x, br.x),
     y0: Math.min(tl.y, br.y),
@@ -59,4 +78,153 @@ export function zoneFromTwoPoints(
     y1: Math.max(tl.y, br.y),
   };
   return isValidZone(zone) ? zone : null;
+}
+
+/**
+ * Axis-aligned bounding zone from four calibration corners
+ * (tl, tr, br, bl), sanity-checked via isValidZone.
+ */
+export function zoneFromFourCorners(
+  tl: Point2D,
+  tr: Point2D,
+  br: Point2D,
+  bl: Point2D,
+): ActiveZone | null {
+  const xs = [tl.x, tr.x, br.x, bl.x];
+  const ys = [tl.y, tr.y, br.y, bl.y];
+  const zone: ActiveZone = {
+    x0: Math.min(...xs),
+    y0: Math.min(...ys),
+    x1: Math.max(...xs),
+    y1: Math.max(...ys),
+  };
+  return isValidZone(zone) ? zone : null;
+}
+
+const UNIT_SQUARE: readonly [Point2D, Point2D, Point2D, Point2D] = [
+  { x: 0, y: 0 },
+  { x: 1, y: 0 },
+  { x: 1, y: 1 },
+  { x: 0, y: 1 },
+];
+
+/** Solve 8×8 linear system Ax = b via Gaussian elimination with partial pivoting. */
+function solveLinear8(A: number[][], b: number[]): number[] | null {
+  const n = 8;
+  const M = A.map((row, i) => [...row, b[i]!]);
+
+  for (let col = 0; col < n; col++) {
+    let pivot = col;
+    for (let r = col + 1; r < n; r++) {
+      if (Math.abs(M[r]![col]!) > Math.abs(M[pivot]![col]!)) pivot = r;
+    }
+    if (Math.abs(M[pivot]![col]!) < 1e-12) return null;
+    if (pivot !== col) {
+      const tmp = M[col]!;
+      M[col] = M[pivot]!;
+      M[pivot] = tmp;
+    }
+    const diag = M[col]![col]!;
+    for (let c = col; c <= n; c++) M[col]![c]! /= diag;
+    for (let r = 0; r < n; r++) {
+      if (r === col) continue;
+      const f = M[r]![col]!;
+      for (let c = col; c <= n; c++) M[r]![c]! -= f * M[col]![c]!;
+    }
+  }
+
+  return M.map((row) => row[n]!);
+}
+
+/**
+ * Build the 8×8 DLT system for a fixed homogeneous scale index.
+ * `fixedIndex` in 0..8 is set to 1; the other 8 unknowns are solved.
+ */
+function buildHomographySystem(
+  srcCorners: readonly [Point2D, Point2D, Point2D, Point2D],
+  dstCorners: readonly [Point2D, Point2D, Point2D, Point2D],
+  fixedIndex: number,
+): { A: number[][]; b: number[] } | null {
+  if (fixedIndex < 0 || fixedIndex > 8) return null;
+  const A: number[][] = [];
+  const b: number[] = [];
+
+  for (let i = 0; i < 4; i++) {
+    const s = srcCorners[i]!;
+    const d = dstCorners[i]!;
+    // Full rows before dropping the fixed coefficient:
+    // x': h0 s.x + h1 s.y + h2 + 0 + 0 + 0 - h6 s.x d.x - h7 s.y d.x - h8 d.x = 0
+    // y': 0 + 0 + 0 + h3 s.x + h4 s.y + h5 - h6 s.x d.y - h7 s.y d.y - h8 d.y = 0
+    const rowX = [s.x, s.y, 1, 0, 0, 0, -s.x * d.x, -s.y * d.x, -d.x];
+    const rowY = [0, 0, 0, s.x, s.y, 1, -s.x * d.y, -s.y * d.y, -d.y];
+    for (const full of [rowX, rowY]) {
+      const fixedCoeff = full[fixedIndex]!;
+      const row: number[] = [];
+      for (let j = 0; j < 9; j++) {
+        if (j === fixedIndex) continue;
+        row.push(full[j]!);
+      }
+      // Move fixed term (value 1) to the RHS: A h = -fixedCoeff
+      A.push(row);
+      b.push(-fixedCoeff);
+    }
+  }
+  return { A, b };
+}
+
+function assembleHomography(h8: number[], fixedIndex: number): Homography {
+  const H = new Array<number>(9);
+  let k = 0;
+  for (let i = 0; i < 9; i++) {
+    if (i === fixedIndex) H[i] = 1;
+    else H[i] = h8[k++]!;
+  }
+  return H as unknown as Homography;
+}
+
+/**
+ * Direct Linear Transform (DLT) homography from 4 point correspondences.
+ * src = camera-space corners, dst = display corners (default unit square).
+ *
+ * Solves 8 DOF with H[8]=1 when possible; if singular, retries with other
+ * elements fixed to 1 (H[0], H[4], …).
+ */
+export function homographyFromFourCorners(
+  srcCorners: readonly [Point2D, Point2D, Point2D, Point2D],
+  dstCorners: readonly [Point2D, Point2D, Point2D, Point2D] = UNIT_SQUARE,
+): Homography | null {
+  // Prefer H[8]=1 (affine-friendly), then try other scale anchors.
+  const tryOrder = [8, 0, 4, 1, 2, 3, 5, 6, 7];
+  for (const fixed of tryOrder) {
+    const sys = buildHomographySystem(srcCorners, dstCorners, fixed);
+    if (!sys) continue;
+    const h = solveLinear8(sys.A, sys.b);
+    if (!h) continue;
+    return assembleHomography(h, fixed);
+  }
+  return null;
+}
+
+/** Apply homography H to a point (no clamp). */
+export function applyHomography(H: Homography, point: Point2D): Point2D {
+  const w = H[6] * point.x + H[7] * point.y + H[8];
+  if (Math.abs(w) < 1e-12) return { x: point.x, y: point.y };
+  return {
+    x: (H[0] * point.x + H[1] * point.y + H[2]) / w,
+    y: (H[3] * point.x + H[4] * point.y + H[5]) / w,
+  };
+}
+
+/** Apply homography and clamp result to [0,1]. */
+export function mapWithHomography(point: Point2D, H: Homography): Point2D {
+  const p = applyHomography(H, point);
+  return { x: clamp01(p.x), y: clamp01(p.y) };
+}
+
+/** Map a tip through either an active zone or a homography. */
+export function mapTip(point: Point2D, mapping: TipMapping): Point2D {
+  if (mapping.kind === 'zone') {
+    return mapToDisplay(point, mapping.zone);
+  }
+  return mapWithHomography(point, mapping.H);
 }

@@ -1,105 +1,363 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Gesture, type PoseFrame, zeroLandmarks } from '@ghost-hands/protocol';
-import { DEFAULT_ACTIVE_ZONE, mapToDisplay } from '@ghost-hands/gestures';
-import { openHarnessChannel, publishPose } from './harnessChannel';
+import { HAND_CONNECTIONS } from '@ghost-hands/renderer';
+import { mapToDisplay, zoneFromTwoPoints } from '@ghost-hands/gestures';
+import { openHarnessChannel, publishCtrl, publishPose } from './harnessChannel';
+import { createHandTracker, type TrackerSource } from '../tracking/handTracker';
+import { PosePipeline } from '../tracking/posePipeline';
+import { loadMapping, loadZone, saveZone } from '../tracking/calibrationStore';
+import type { SyntheticMode } from '../tracking/syntheticHand';
+
+type InputMode = 'camera' | 'synthetic' | 'mouse';
+
+const GESTURE_LABEL: Record<number, string> = {
+  [Gesture.None]: 'NONE',
+  [Gesture.Point]: 'POINT',
+  [Gesture.Pinch]: 'PINCH',
+  [Gesture.Palm]: 'CLEAR',
+  [Gesture.Fist]: 'FIST',
+};
 
 /**
- * Two-tab M0 harness — pointer side.
- * Mouse position stands in for the index fingertip; BroadcastChannel carries 96 B pose frames.
+ * Two-tab M1 harness — pointer side.
+ * Camera / Synthetic / Mouse → PosePipeline → BroadcastChannel pose + ctrl.
  */
 export function DevPointer() {
   const [live, setLive] = useState(false);
+  const [inputMode, setInputMode] = useState<InputMode>('synthetic');
+  const [synthMode, setSynthMode] = useState<SyntheticMode>('point');
   const [fps, setFps] = useState(0);
+  const [source, setSource] = useState<TrackerSource>('synthetic');
+  const [gestureLabel, setGestureLabel] = useState('NONE');
+  const [calibMsg, setCalibMsg] = useState<string | null>(null);
+  const [hideHand, setHideHand] = useState(false);
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const tipRef = useRef({ x: 0.5, y: 0.5 });
+  const handPresentRef = useRef(false);
   const seqRef = useRef(0);
+  const pipelineRef = useRef<PosePipeline | null>(null);
+  const trackerRef = useRef<ReturnType<typeof createHandTracker> | null>(null);
+  const hideHandRef = useRef(false);
+  const calibGenRef = useRef(0);
+  const calibRafRef = useRef(0);
   const channel = useMemo(() => openHarnessChannel(), []);
 
   useEffect(() => {
-    return () => channel.close();
+    hideHandRef.current = hideHand;
+  }, [hideHand]);
+
+  // Hotkeys: C clear, Space hide hand
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+      if (e.code === 'Space') {
+        e.preventDefault();
+        setHideHand((v) => !v);
+      }
+      if (e.key === 'c' || e.key === 'C') {
+        publishCtrl(channel, { t: 'clear', scope: 'mine' });
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, [channel]);
 
   useEffect(() => {
-    if (!live) return;
-    const started = performance.now();
-    let frames = 0;
-    let lastFpsAt = started;
-    const id = window.setInterval(() => {
-      const t = performance.now() - started;
-      const cam = tipRef.current;
-      const tip = mapToDisplay(cam, DEFAULT_ACTIVE_ZONE);
-      const landmarks = zeroLandmarks().map((_, i) => {
-        // crude fan around tip for a readable ghost hand in the receiver
-        const a = (i / 21) * Math.PI * 2;
-        return {
-          x: Math.min(1, Math.max(0, cam.x + Math.cos(a) * 0.04)),
-          y: Math.min(1, Math.max(0, cam.y + Math.sin(a) * 0.04)),
-        };
-      });
-      landmarks[8] = { ...cam };
-
-      const frame: PoseFrame = {
-        version: 1,
-        handPresent: true,
-        leftHand: false,
-        gesture: Gesture.Point,
-        seq: seqRef.current++ & 0xffff,
-        tCaptureMs: Math.floor(t),
-        tip,
-        landmarks,
-      };
-      publishPose(channel, frame);
-      frames += 1;
-      if (performance.now() - lastFpsAt >= 1000) {
-        setFps(frames);
-        frames = 0;
-        lastFpsAt = performance.now();
+    if (!live) {
+      calibGenRef.current += 1;
+      if (calibRafRef.current) {
+        cancelAnimationFrame(calibRafRef.current);
+        calibRafRef.current = 0;
       }
-      drawPreview(canvasRef.current, cam);
-    }, 1000 / 30);
+      trackerRef.current?.stop();
+      trackerRef.current = null;
+      return;
+    }
 
-    channel.postMessage({ kind: 'hello', name: 'Harness', color: '#4FC3F7' });
-    return () => window.clearInterval(id);
-  }, [live, channel]);
+    pipelineRef.current = new PosePipeline({ mapping: loadMapping() });
+    try {
+      channel.postMessage({ kind: 'hello', name: 'Harness', color: '#4FC3F7' });
+    } catch (err) {
+      console.warn('harness hello failed', err);
+    }
+
+    if (inputMode === 'mouse') {
+      handPresentRef.current = true;
+      const started = performance.now();
+      let frames = 0;
+      let lastFpsAt = started;
+      const id = window.setInterval(() => {
+        const t = performance.now() - started;
+        const cam = tipRef.current;
+        const tip = mapToDisplay(cam, loadZone());
+        const landmarks = zeroLandmarks().map((_, i) => {
+          const a = (i / 21) * Math.PI * 2;
+          return {
+            x: Math.min(1, Math.max(0, cam.x + Math.cos(a) * 0.04)),
+            y: Math.min(1, Math.max(0, cam.y + Math.sin(a) * 0.04)),
+          };
+        });
+        landmarks[8] = { ...cam };
+
+        const frame: PoseFrame = {
+          version: 1,
+          handPresent: !hideHandRef.current,
+          leftHand: false,
+          gesture: Gesture.Point,
+          seq: seqRef.current++ & 0xffff,
+          tCaptureMs: Math.floor(t),
+          tip,
+          landmarks,
+        };
+        handPresentRef.current = frame.handPresent;
+        publishPose(channel, frame);
+        frames += 1;
+        if (performance.now() - lastFpsAt >= 1000) {
+          setFps(frames);
+          frames = 0;
+          lastFpsAt = performance.now();
+        }
+        drawPreview(canvasRef.current, cam, null, 'POINT');
+      }, 1000 / 30);
+      setSource('synthetic');
+      setGestureLabel('POINT');
+      return () => {
+        window.clearInterval(id);
+        calibGenRef.current += 1;
+        if (calibRafRef.current) {
+          cancelAnimationFrame(calibRafRef.current);
+          calibRafRef.current = 0;
+        }
+      };
+    }
+
+    const tracker = createHandTracker({
+      video: videoRef.current ?? undefined,
+      previewCanvas: canvasRef.current ?? undefined,
+      preferSynthetic: inputMode === 'synthetic',
+    });
+    trackerRef.current = tracker;
+    tracker.setSyntheticMode(synthMode);
+    tracker.onFrame((sample, meta) => {
+      setSource(meta.source);
+      setFps(meta.fps);
+      const pipeline = pipelineRef.current;
+      if (!pipeline) return;
+
+      let result = pipeline.update(sample);
+      if (hideHandRef.current) {
+        result = {
+          frame: { ...result.frame, handPresent: false, landmarks: zeroLandmarks() },
+          events: result.events,
+        };
+      }
+      handPresentRef.current = result.frame.handPresent;
+      publishPose(channel, result.frame);
+      for (const ev of result.events) publishCtrl(channel, ev);
+      setGestureLabel(GESTURE_LABEL[result.frame.gesture] ?? 'NONE');
+      const camTip = result.frame.landmarks[8] ?? result.frame.tip;
+      tipRef.current = camTip;
+      drawPreview(
+        canvasRef.current,
+        camTip,
+        result.frame.handPresent ? result.frame.landmarks : null,
+        GESTURE_LABEL[result.frame.gesture] ?? 'NONE',
+      );
+    });
+    void tracker.start();
+
+    return () => {
+      calibGenRef.current += 1;
+      if (calibRafRef.current) {
+        cancelAnimationFrame(calibRafRef.current);
+        calibRafRef.current = 0;
+      }
+      tracker.stop();
+      trackerRef.current = null;
+    };
+    // synthMode is applied via the effect below so mode switches stay snappy
+    // without restarting the camera / landmarker.
+  }, [live, inputMode, channel]);
+
+  useEffect(() => {
+    trackerRef.current?.setSyntheticMode(synthMode);
+    const pipeline = pipelineRef.current;
+    if (!pipeline) return;
+    const flushed = pipeline.flushActiveStroke();
+    if (flushed) publishCtrl(channel, flushed);
+    pipeline.reset();
+  }, [synthMode, channel]);
+
+  useEffect(() => {
+    return () => {
+      calibGenRef.current += 1;
+      if (calibRafRef.current) {
+        cancelAnimationFrame(calibRafRef.current);
+        calibRafRef.current = 0;
+      }
+    };
+  }, []);
+
+  const startCalibrate = () => {
+    calibGenRef.current += 1;
+    if (calibRafRef.current) {
+      cancelAnimationFrame(calibRafRef.current);
+      calibRafRef.current = 0;
+    }
+    const gen = calibGenRef.current;
+    setCalibMsg('Point at top-left of the stage and hold steady…');
+    const points: Array<{ x: number; y: number }> = [];
+    let holdStart: number | null = null;
+    let last = { x: tipRef.current.x, y: tipRef.current.y };
+    const started = performance.now();
+
+    const tick = () => {
+      if (gen !== calibGenRef.current) return;
+      const now = performance.now();
+      if (now - started > 5000 && points.length < 2) {
+        setCalibMsg('Calibration timed out — using auto zone.');
+        return;
+      }
+      if (!handPresentRef.current) {
+        holdStart = null;
+        calibRafRef.current = requestAnimationFrame(tick);
+        return;
+      }
+      const tip = tipRef.current;
+      const moved = Math.hypot(tip.x - last.x, tip.y - last.y);
+      if (moved < 0.01) {
+        if (holdStart === null) holdStart = now;
+        if (now - holdStart >= 1000) {
+          points.push({ ...tip });
+          holdStart = null;
+          if (points.length === 1) {
+            setCalibMsg('Hold bottom-right…');
+          } else {
+            if (gen !== calibGenRef.current) return;
+            const zone = zoneFromTwoPoints(points[0]!, points[1]!);
+            if (zone) {
+              saveZone(zone);
+              pipelineRef.current?.setMapping({ kind: 'zone', zone });
+              setCalibMsg(
+                `Saved zone ${zone.x0.toFixed(2)}–${zone.x1.toFixed(2)}.`,
+              );
+            } else {
+              setCalibMsg('Zone invalid — kept previous.');
+            }
+            return;
+          }
+        }
+      } else {
+        holdStart = null;
+        last = { ...tip };
+      }
+      calibRafRef.current = requestAnimationFrame(tick);
+    };
+    calibRafRef.current = requestAnimationFrame(tick);
+  };
 
   return (
     <main className="page harness">
       <h1 className="brand">Dev Pointer</h1>
       <p className="lede">
-        Move the mouse over the stage. Pose frames (96 B) stream over BroadcastChannel to{' '}
-        <Link to="/dev/receiver">/dev/receiver</Link>.
+        Stream pose + stroke ctrl over BroadcastChannel to{' '}
+        <Link to="/dev/receiver">/dev/receiver</Link>. Default Synthetic works without a webcam.
       </p>
-      <canvas
-        ref={canvasRef}
-        className="stage"
-        width={960}
-        height={600}
-        onMouseMove={(e) => {
-          const rect = e.currentTarget.getBoundingClientRect();
-          tipRef.current = {
-            x: (e.clientX - rect.left) / rect.width,
-            y: (e.clientY - rect.top) / rect.height,
-          };
-          if (!live) drawPreview(e.currentTarget, tipRef.current);
-        }}
-      />
+      <div className="banner">
+        Your video stays on this device. Only hand positions are sent.
+      </div>
+
+      <div className="mode-row">
+        {(['synthetic', 'camera', 'mouse'] as const).map((m) => (
+          <button
+            key={m}
+            type="button"
+            className={inputMode === m ? 'primary' : 'ghost'}
+            disabled={live}
+            onClick={() => setInputMode(m)}
+          >
+            {m === 'synthetic' ? 'Synthetic' : m === 'camera' ? 'Camera' : 'Mouse'}
+          </button>
+        ))}
+      </div>
+
+      {inputMode === 'synthetic' && (
+        <div className="mode-row">
+          {(['point', 'pinch', 'palm', 'none'] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              className={synthMode === m ? 'primary' : 'ghost'}
+              onClick={() => setSynthMode(m)}
+            >
+              {m}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="preview-wrap">
+        <video
+          ref={videoRef}
+          className={`preview-video ${inputMode === 'camera' && source === 'camera' ? 'show' : ''}`}
+          playsInline
+          muted
+          autoPlay
+        />
+        <canvas
+          ref={canvasRef}
+          className="stage preview-canvas"
+          width={960}
+          height={600}
+          onMouseMove={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            tipRef.current = {
+              x: (e.clientX - rect.left) / rect.width,
+              y: (e.clientY - rect.top) / rect.height,
+            };
+            if (!live) drawPreview(e.currentTarget, tipRef.current, null, '—');
+          }}
+        />
+        <span className={`gesture-badge gesture-${gestureLabel.toLowerCase()}`}>
+          {gestureLabel}
+        </span>
+      </div>
+
       <div className="row">
         <button className="primary" type="button" onClick={() => setLive((v) => !v)}>
           {live ? 'Stop' : 'Start streaming'}
         </button>
+        <button className="ghost" type="button" onClick={startCalibrate} disabled={!live}>
+          Calibrate (5s)
+        </button>
+        <Link className="ghost" to="/calibrate" style={{ textDecoration: 'none' }}>
+          Full calibrate
+        </Link>
         <Link className="ghost" to="/join">
           Exit
         </Link>
       </div>
       <p className="status">
-        {live ? `live · ~${fps} fps · zone ${DEFAULT_ACTIVE_ZONE.x0}-${DEFAULT_ACTIVE_ZONE.x1}` : 'idle'}
+        {live
+          ? `live · ${source} · ~${fps} fps · ${gestureLabel}${hideHand ? ' · hand hidden' : ''}`
+          : 'idle · Space hide hand · C clear'}
       </p>
+      {calibMsg && <p className="status">{calibMsg}</p>}
     </main>
   );
 }
 
-function drawPreview(canvas: HTMLCanvasElement | null, tip: { x: number; y: number }) {
+function drawPreview(
+  canvas: HTMLCanvasElement | null,
+  tip: { x: number; y: number },
+  landmarks: Array<{ x: number; y: number }> | null,
+  gesture: string,
+) {
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
@@ -108,22 +366,41 @@ function drawPreview(canvas: HTMLCanvasElement | null, tip: { x: number; y: numb
   ctx.fillStyle = '#15202b';
   ctx.fillRect(0, 0, width, height);
 
-  // active zone guide
+  const zone = loadZone();
   ctx.strokeStyle = '#2a5a78';
   ctx.setLineDash([6, 6]);
   ctx.strokeRect(
-    DEFAULT_ACTIVE_ZONE.x0 * width,
-    DEFAULT_ACTIVE_ZONE.y0 * height,
-    (DEFAULT_ACTIVE_ZONE.x1 - DEFAULT_ACTIVE_ZONE.x0) * width,
-    (DEFAULT_ACTIVE_ZONE.y1 - DEFAULT_ACTIVE_ZONE.y0) * height,
+    zone.x0 * width,
+    zone.y0 * height,
+    (zone.x1 - zone.x0) * width,
+    (zone.y1 - zone.y0) * height,
   );
   ctx.setLineDash([]);
 
+  if (landmarks && landmarks.length >= 21) {
+    ctx.strokeStyle = '#4FC3F7';
+    ctx.lineWidth = 2;
+    for (const [a, b] of HAND_CONNECTIONS) {
+      const pa = landmarks[a]!;
+      const pb = landmarks[b]!;
+      ctx.beginPath();
+      ctx.moveTo(pa.x * width, pa.y * height);
+      ctx.lineTo(pb.x * width, pb.y * height);
+      ctx.stroke();
+    }
+    ctx.fillStyle = '#e8eef4';
+    for (const lm of landmarks) {
+      ctx.beginPath();
+      ctx.arc(lm.x * width, lm.y * height, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
   ctx.fillStyle = '#4FC3F7';
   ctx.beginPath();
-  ctx.arc(tip.x * width, tip.y * height, 10, 0, Math.PI * 2);
+  ctx.arc(tip.x * width, tip.y * height, 8, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = '#e8eef4';
-  ctx.font = '14px ui-sans-serif, system-ui';
-  ctx.fillText('index tip (mouse)', tip.x * width + 14, tip.y * height + 4);
+  ctx.font = '13px ui-sans-serif, system-ui';
+  ctx.fillText(gesture, tip.x * width + 12, tip.y * height + 4);
 }
