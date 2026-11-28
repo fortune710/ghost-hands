@@ -8,6 +8,7 @@ from typing import Any
 
 # PRD §8.1 — 31-char alphabet, no confusable characters.
 CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
+COLOR_RE = r"^#[0-9A-Fa-f]{6}$"
 
 
 class SessionStatus(StrEnum):
@@ -26,7 +27,12 @@ def format_display_code(code: str) -> str:
 
 
 def normalize_code(code: str) -> str:
-    return code.replace("-", "").upper()
+    return "".join(ch for ch in code.upper() if ch.isalnum())
+
+
+def sanitize_name(name: str, max_len: int = 24) -> str:
+    cleaned = "".join(ch for ch in name if ch.isprintable() and ord(ch) >= 32)
+    return cleaned.strip()[:max_len]
 
 
 def new_token() -> str:
@@ -58,6 +64,7 @@ class Session:
     host_name: str | None
     created_at: datetime
     expires_at: datetime
+    max_expires_at: datetime
     max_pointers: int
     auto_admit: bool
     status: SessionStatus = SessionStatus.WAITING
@@ -72,22 +79,43 @@ class Session:
     def join_url(self, base: str) -> str:
         return f"{base.rstrip('/')}/join/{self.display_code}"
 
+    def approved_count(self) -> int:
+        return sum(1 for p in self.pointers.values() if p.approved)
+
+    def is_full(self) -> bool:
+        return len(self.pointers) >= self.max_pointers or self.approved_count() >= self.max_pointers
+
+    def mark_live(self, now: datetime | None = None) -> None:
+        self.status = SessionStatus.LIVE
+        # Once used, sessions live until max TTL (PRD B-4).
+        self.expires_at = self.max_expires_at
+
+    def is_expired(self, now: datetime) -> bool:
+        if self.status == SessionStatus.ENDED:
+            return True
+        return now >= self.expires_at or now >= self.max_expires_at
+
 
 def create_session(
     *,
     host_name: str | None,
     max_pointers: int,
     unused_ttl_s: int,
+    max_ttl_s: int,
     auto_admit: bool,
+    now: datetime | None = None,
 ) -> Session:
-    now = datetime.now(UTC)
+    created = now or datetime.now(UTC)
+    unused_exp = created + timedelta(seconds=unused_ttl_s)
+    max_exp = created + timedelta(seconds=max_ttl_s)
     return Session(
         session_id=new_session_id(),
         code=generate_code(),
         host_token=new_token(),
-        host_name=host_name,
-        created_at=now,
-        expires_at=now + timedelta(seconds=unused_ttl_s),
+        host_name=sanitize_name(host_name) if host_name else None,
+        created_at=created,
+        expires_at=min(unused_exp, max_exp),
+        max_expires_at=max_exp,
         max_pointers=max_pointers,
         auto_admit=auto_admit,
     )

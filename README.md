@@ -59,11 +59,22 @@ On-device MediaPipe Hand Landmarker in `apps/pointer`, synthetic demo fallback, 
 
 | Done | Deferred |
 |---|---|
-| 96 B pose codec + schema codegen (zero drift) | WebRTC DataChannel offerer (M2) |
-| One-Euro, gesture FSM, 600 ms arrow snap, 2-point / 4-corner mapping | Production calibration via sharer `calib_target` (M4 polish) |
-| Canvas2D ghost hand + fading ink / arrows / clear wipe | Desktop overlay consuming live poses (M3) |
-| `HandTracker` + synthetic / camera / mouse harness | Homography end-to-end in Live UI (library ready) |
+| 96 B pose codec + schema codegen (zero drift) | Production calibration via sharer `calib_target` (M4 polish) |
+| One-Euro, gesture FSM, 600 ms arrow snap, 2-point / 4-corner mapping | Homography end-to-end in Live UI (library ready) |
+| Canvas2D ghost hand + fading ink / arrows / clear wipe | Full tray/hotkeys/desktop polish (M3) |
+| `HandTracker` + synthetic / camera / mouse harness | |
 | `/dev/pointer` → `/dev/receiver` at 30–60 fps | |
+
+### M2 — Python backend + real network
+
+FastAPI sessions REST + WS signaling (auto-admit default), TURN HMAC vending, lifecycle TTLs, rate limits, health/metrics. Pointer `/join` + WebRTC offerer (`pose`/`ctrl`). Desktop overlay answerer wired to the same signaling. Deploy artifacts under `backend/api/deploy` + `docs/deploy-m2.md`.
+
+| Verified in CI / Linux VM | Needs real VPS / networks |
+|---|---|
+| Contract tests (pytest + TS schema), Ruff/mypy | Staging deploy via shared nginx ingress |
+| Vite build, loopback two-browser smoke (`/dev/host` + `/join`) | Two different networks |
+| Local `window.__GH_LATENCY__.p50` hook | TURN-only (UDP blocked) against real TURN |
+| Codegen drift check | Same-continent glass-to-glass p50 &lt; 130 ms |
 
 ## Environments
 

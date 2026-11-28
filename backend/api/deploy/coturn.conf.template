@@ -1,0 +1,26 @@
+# Optional self-hosted coturn template for Ghost Hands TURN (PRD Q4 default is Cloudflare).
+# Use when GH_TURN_URLS + GH_TURN_SECRET point at this instance.
+#
+# Install (Debian/Ubuntu sketch):
+#   sudo apt install coturn
+#   sudo cp coturn.conf.template /etc/turnserver.conf
+#   # set listening-ip, external-ip, static-auth-secret to match GH_TURN_SECRET
+#   sudo systemctl enable --now coturn
+#
+# Client URLs (example):
+#   GH_TURN_URLS=turn:turn.example.com:3478?transport=udp,turn:turn.example.com:3478?transport=tcp,turns:turn.example.com:443
+#   GH_TURN_SECRET=<same as static-auth-secret>
+
+listening-port=3478
+tls-listening-port=443
+fingerprint
+lt-cred-mech
+use-auth-secret
+static-auth-secret=REPLACE_WITH_GH_TURN_SECRET
+realm=ghosthands.fortunealebiosu.dev
+# listening-ip=0.0.0.0
+# external-ip=YOUR.PUBLIC.IP
+no-multicast-peers
+no-cli
+# Prefer relay for corporate firewalls (TCP / TLS 443)
+# relay-ip=YOUR.PUBLIC.IP

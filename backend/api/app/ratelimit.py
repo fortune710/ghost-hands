@@ -26,8 +26,24 @@ class SlidingWindowRateLimiter:
         self._last_seen[key] = t
         return True
 
+    def remaining(self, key: str, now: float | None = None) -> int:
+        t = now if now is not None else time.monotonic()
+        q = self._hits[key]
+        while q and t - q[0] > self.window_s:
+            q.popleft()
+        return max(0, self.limit - len(q))
+
     def _purge(self, now: float) -> None:
         stale = [k for k, seen in self._last_seen.items() if now - seen > self.ttl_s]
         for k in stale:
             self._hits.pop(k, None)
             self._last_seen.pop(k, None)
+
+
+class RateLimiters:
+    """PRD B-6: 10 creates/min/IP, 5 joins/min/IP/session, ≤50 msgs/s per socket."""
+
+    def __init__(self) -> None:
+        self.create = SlidingWindowRateLimiter(limit=10, window_s=60.0)
+        self.join = SlidingWindowRateLimiter(limit=5, window_s=60.0)
+        self.ws_msg = SlidingWindowRateLimiter(limit=50, window_s=1.0)

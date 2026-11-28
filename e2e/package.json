@@ -3,6 +3,6 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "test": "echo 'e2e suites land in M2' && exit 0"
+    "test": "echo 'Use docs/latency-and-network-tests.md for M2 manual/network checks; Playwright suites expand in M3+' && exit 0"
   }
 }

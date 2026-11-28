@@ -1,1 +1,1 @@
-"""WebSocket handlers."""
+"""WebSocket signaling package."""

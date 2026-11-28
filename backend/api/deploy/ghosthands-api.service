@@ -1,0 +1,22 @@
+# Optional systemd unit if not using docker compose.
+# Install:
+#   sudo cp deploy/ghosthands-api.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now ghosthands-api
+
+[Unit]
+Description=Ghost Hands FastAPI signaling service
+After=network.target
+
+[Service]
+Type=simple
+User=ghosthands
+WorkingDirectory=/opt/ghost-hands/backend/api
+EnvironmentFile=/opt/ghost-hands/backend/api/.env
+ExecStart=/opt/ghost-hands/backend/api/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+Restart=on-failure
+RestartSec=3
+# Single worker required for in-memory session store (MVP).
+
+[Install]
+WantedBy=multi-user.target

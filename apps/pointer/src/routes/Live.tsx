@@ -1,10 +1,22 @@
-import { useEffect, useRef, useState } from 'react';
-import { Link, useLocation, useParams } from 'react-router-dom';
-import { formatDisplayCode, normalizeCode, Gesture, zeroLandmarks } from '@ghost-hands/protocol';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import {
+  PROTO_VERSION,
+  encodePose,
+  formatDisplayCode,
+  normalizeCode,
+  Gesture,
+  zeroLandmarks,
+} from '@ghost-hands/protocol';
+import type { Ctrl } from '@ghost-hands/protocol/generated';
 import { HAND_CONNECTIONS } from '@ghost-hands/renderer';
 import { createHandTracker } from '../tracking/handTracker';
-import { PosePipeline } from '../tracking/posePipeline';
+import { PosePipeline, type PipelineCtrlEvent } from '../tracking/posePipeline';
 import { loadMapping } from '../tracking/calibrationStore';
+import { SignalingClient } from '../lib/signaling';
+import { createPointerPeer, type PointerPeerHandle } from '../rtc/offerer';
+import { PoseLatencyTracker } from '../rtc/latency';
+import type { IceServerConfig } from '../lib/api';
 
 const GESTURE_LABEL: Record<number, string> = {
   [Gesture.None]: 'NONE',
@@ -14,40 +26,212 @@ const GESTURE_LABEL: Record<number, string> = {
   [Gesture.Fist]: 'FIST',
 };
 
-/**
- * Live session — M1 wires HandTracker + PosePipeline + preview.
- * WebRTC offerer lands in M2.
- */
+type ConnStatus =
+  | 'connecting'
+  | 'pending_approval'
+  | 'connecting_webrtc'
+  | 'live'
+  | 'reconnecting'
+  | 'ended'
+  | 'denied';
+
+const STATUS_LABEL: Record<ConnStatus, string> = {
+  connecting: 'Connecting…',
+  pending_approval: 'Waiting for sharer approval…',
+  connecting_webrtc: 'Negotiating WebRTC…',
+  live: 'Live',
+  reconnecting: 'Sharer reconnecting…',
+  ended: 'Session ended',
+  denied: 'Join denied',
+};
+
+const POSE_INTERVAL_MS = 33;
+
 export function Live() {
   const { code: raw } = useParams();
+  const navigate = useNavigate();
   const location = useLocation();
-  const state = location.state as { name?: string; color?: string } | null;
+  const [search] = useSearchParams();
+  const preferCamera = search.get('camera') === '1';
   const displayCode = formatDisplayCode(normalizeCode(raw ?? ''));
+  const state = location.state as { name?: string; color?: string } | null;
   const name = state?.name ?? localStorage.getItem('gh:name') ?? 'Pointer';
   const color = state?.color ?? localStorage.getItem('gh:color') ?? '#4FC3F7';
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const hideRef = useRef(false);
+  const peerRef = useRef<PointerPeerHandle | null>(null);
+  const signalingRef = useRef<SignalingClient | null>(null);
+  const pipelineRef = useRef<PosePipeline | null>(null);
+  const latestFrameRef = useRef<ReturnType<PosePipeline['update']>['frame'] | null>(null);
+  const latencyRef = useRef(new PoseLatencyTracker());
+  const poseIntervalRef = useRef(0);
+  const ctrlOpenRef = useRef(false);
+  const poseOpenRef = useRef(false);
+
+  const [connStatus, setConnStatus] = useState<ConnStatus>('connecting');
   const [gesture, setGesture] = useState('NONE');
   const [source, setSource] = useState('synthetic');
   const [fps, setFps] = useState(0);
   const [tip, setTip] = useState({ x: 0.5, y: 0.5 });
   const [running, setRunning] = useState(true);
+  const [detail, setDetail] = useState<string | null>(null);
+
+  const sendCtrl = useCallback((payload: PipelineCtrlEvent | Ctrl.Hello) => {
+    const ch = peerRef.current?.ctrlChannel;
+    if (!ch || ch.readyState !== 'open') return;
+    ch.send(JSON.stringify(payload));
+  }, []);
+
+  const startWebRtc = useCallback(
+    async (iceServers: IceServerConfig[]) => {
+      setDetail(null);
+      setConnStatus('connecting_webrtc');
+      const ice = iceServers as RTCIceServer[];
+      const peer = createPointerPeer({
+        iceServers: ice,
+        onLocalIce: (candidate) => {
+          signalingRef.current?.sendIce(candidate as RTCIceCandidateInit | null, 'host');
+        },
+        onCtrlMessage: () => {
+          /* M2 — sharer welcome / display_changed land in M3 */
+        },
+      });
+      peerRef.current = peer;
+
+      peer.poseChannel.onopen = () => {
+        poseOpenRef.current = true;
+        if (ctrlOpenRef.current) setConnStatus('live');
+      };
+      peer.ctrlChannel.onopen = () => {
+        ctrlOpenRef.current = true;
+        const hello: Ctrl.Hello = {
+          t: 'hello',
+          name,
+          color,
+          proto: PROTO_VERSION,
+          caps: ['pinch', 'palm'],
+          enc: 'bin1',
+        };
+        peer.ctrlChannel.send(JSON.stringify(hello));
+        if (poseOpenRef.current) setConnStatus('live');
+      };
+
+      const offer = await peer.pc.createOffer();
+      await peer.pc.setLocalDescription(offer);
+      signalingRef.current?.sendSdp(peer.pc.localDescription ?? offer, 'host');
+    },
+    [color, name],
+  );
 
   useEffect(() => {
-    if (!running) return;
-    const pipeline = new PosePipeline({ mapping: loadMapping() });
+    const code = normalizeCode(raw ?? '');
+    if (!code) return;
+    let cancelled = false;
+
+    const signaling = new SignalingClient({
+      onPending: () => {
+        if (!cancelled) {
+          setDetail(null);
+          setConnStatus('pending_approval');
+        }
+      },
+      onDenied: () => {
+        if (!cancelled) setConnStatus('denied');
+      },
+      onKicked: () => {
+        if (cancelled) return;
+        setConnStatus('ended');
+        setDetail('You were removed from the session.');
+      },
+      onSessionEnded: (reason) => {
+        if (cancelled) return;
+        setConnStatus('ended');
+        setDetail(reason);
+        peerRef.current?.close();
+      },
+      onHostReconnecting: () => {
+        if (!cancelled) setConnStatus('reconnecting');
+      },
+      onApproved: (msg) => {
+        if (cancelled) return;
+        setDetail(null);
+        void startWebRtc(msg.ice_servers);
+      },
+      onSdp: async (sdp) => {
+        if (cancelled || sdp.type !== 'answer' || !peerRef.current) return;
+        try {
+          await peerRef.current.setRemoteAnswer(sdp);
+        } catch (err) {
+          console.warn('setRemoteAnswer failed', err);
+        }
+      },
+      onIce: async (_candidate, from) => {
+        if (cancelled || from !== 'host' || !peerRef.current) return;
+        try {
+          await peerRef.current.addIce(_candidate);
+        } catch (err) {
+          console.warn('addIce failed', err);
+        }
+      },
+      onError: (c, msg) => {
+        if (cancelled) return;
+        if (c === 'ROOM_FULL') {
+          setConnStatus('ended');
+          setDetail('This session already has a pointer.');
+        } else if (c === 'ROOM_NOT_FOUND' || c === 'ROOM_EXPIRED') {
+          setConnStatus('ended');
+          setDetail(msg ?? c);
+        }
+      },
+    });
+    signalingRef.current = signaling;
+
+    void (async () => {
+      try {
+        if (!cancelled) {
+          setDetail(null);
+          setConnStatus('connecting');
+        }
+        await signaling.connect(code);
+        if (cancelled) {
+          signaling.close();
+          return;
+        }
+        signaling.join({ name, color });
+      } catch {
+        if (!cancelled) {
+          setConnStatus('ended');
+          setDetail('Could not open signaling connection.');
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(poseIntervalRef.current);
+      peerRef.current?.close();
+      peerRef.current = null;
+      signaling.close();
+      signalingRef.current = null;
+    };
+  }, [raw, name, color, startWebRtc]);
+
+  useEffect(() => {
+    if (!running || connStatus === 'ended' || connStatus === 'denied') return;
+
+    pipelineRef.current = new PosePipeline({ mapping: loadMapping() });
     const tracker = createHandTracker({
       video: videoRef.current ?? undefined,
       previewCanvas: canvasRef.current ?? undefined,
-      preferSynthetic: true,
+      preferSynthetic: !preferCamera,
     });
 
     tracker.onFrame((sample, meta) => {
       setSource(meta.source);
       setFps(meta.fps);
-      let { frame } = pipeline.update(sample);
+      let { frame, events } = pipelineRef.current!.update(sample);
       if (hideRef.current) {
         frame = {
           ...frame,
@@ -55,8 +239,12 @@ export function Live() {
           landmarks: zeroLandmarks(),
         };
       }
+      latestFrameRef.current = frame;
       setTip(frame.tip);
       setGesture(GESTURE_LABEL[frame.gesture] ?? 'NONE');
+      for (const ev of events) {
+        sendCtrl(ev);
+      }
       drawLivePreview(
         canvasRef.current,
         frame.handPresent ? frame.landmarks : null,
@@ -67,6 +255,18 @@ export function Live() {
     });
     void tracker.start();
 
+    poseIntervalRef.current = window.setInterval(() => {
+      const ch = peerRef.current?.poseChannel;
+      const frame = latestFrameRef.current;
+      if (!ch || ch.readyState !== 'open' || !frame) return;
+      const bytes = encodePose(frame);
+      latencyRef.current.recordSend(frame.seq);
+      ch.send(new Uint8Array(bytes).buffer);
+      // Local encode→send mark (pose-to-render glass-to-glass needs sharer clock in M3).
+      latencyRef.current.recordRender(frame.seq);
+      window.__GH_LATENCY__ = { p50: latencyRef.current.getP50Ms() };
+    }, POSE_INTERVAL_MS);
+
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement) return;
       if (e.code === 'Space') {
@@ -74,25 +274,35 @@ export function Live() {
         hideRef.current = !hideRef.current;
       }
       if (e.key === 'c' || e.key === 'C') {
-        // clear stub — sharer clear arrives via DataChannel in M2
+        sendCtrl({ t: 'clear', scope: 'mine' });
       }
-      if (e.key === 'k' || e.key === 'K' || e.key === 'Escape') {
-        // K / Esc stubs for future mute / leave
+      if (e.key === 'Escape') {
+        signalingRef.current?.leave();
+        peerRef.current?.close();
+        navigate('/join');
       }
     };
     window.addEventListener('keydown', onKey);
 
     return () => {
       tracker.stop();
+      window.clearInterval(poseIntervalRef.current);
       window.removeEventListener('keydown', onKey);
     };
-  }, [running, color]);
+  }, [running, color, preferCamera, connStatus, navigate, sendCtrl]);
 
   return (
     <main className="page">
       <h1 className="brand">Ghost Hands</h1>
       <p className="lede">
         {name} · {displayCode} · <span style={{ color }}>●</span> {source} · {gesture}
+      </p>
+      <p className="status" aria-live="polite">
+        {STATUS_LABEL[connStatus]}
+        {detail ? ` — ${detail}` : null}
+        {connStatus === 'live' && window.__GH_LATENCY__ ? (
+          <> · p50 {Math.round(window.__GH_LATENCY__.p50)} ms</>
+        ) : null}
       </p>
       <div className="banner">
         Your video stays on this device. Only hand positions are sent.
@@ -111,7 +321,7 @@ export function Live() {
       </div>
 
       <p className="status">
-        ~{fps} fps · Space hide hand · C clear (M2) ·{' '}
+        ~{fps} fps · Space hide hand · C clear · Esc leave ·{' '}
         <Link to="/calibrate">Calibrate</Link>
       </p>
 
@@ -119,8 +329,8 @@ export function Live() {
         <button className="primary" type="button" onClick={() => setRunning((v) => !v)}>
           {running ? 'Pause tracking' : 'Resume tracking'}
         </button>
-        <Link className="ghost" to="/dev/pointer" style={{ textDecoration: 'none' }}>
-          Open harness
+        <Link className="ghost" to="/dev/host" style={{ textDecoration: 'none' }}>
+          Dev host
         </Link>
         <Link className="ghost" to="/join">
           Leave

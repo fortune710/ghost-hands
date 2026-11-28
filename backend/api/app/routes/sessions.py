@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from datetime import UTC
 from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi import APIRouter, Header, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 
 from app.domain.session import SessionStatus, create_session, normalize_code
+from app.security import secrets_equal
 from app.settings import Settings
 from app.store.base import SessionStore
 from app.turn import ice_servers_for
@@ -22,6 +22,7 @@ class ClientInfo(BaseModel):
 class CreateSessionRequest(BaseModel):
     host_name: str | None = Field(default=None, max_length=24)
     client: ClientInfo | None = None
+    auto_admit: bool | None = None
 
 
 class CreateSessionResponse(BaseModel):
@@ -51,6 +52,15 @@ def _settings(request: Request) -> Settings:
     return settings
 
 
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    if request.client:
+        return request.client.host
+    return "unknown"
+
+
 @router.post("/sessions", status_code=status.HTTP_201_CREATED, response_model=CreateSessionResponse)
 async def create_session_route(
     body: CreateSessionRequest,
@@ -58,31 +68,43 @@ async def create_session_route(
 ) -> CreateSessionResponse:
     settings = _settings(request)
     store = _store(request)
+    metrics = request.app.state.metrics
+    limiters = request.app.state.limiters
+    lifecycle = request.app.state.lifecycle
 
-    # Ensure unique active code (retry a few times).
+    ip = _client_ip(request)
+    if not limiters.create.allow(ip):
+        metrics.inc_error("RATE_LIMITED")
+        raise HTTPException(status_code=429, detail={"error": "RATE_LIMITED"})
+
+    auto_admit = settings.auto_admit_default if body.auto_admit is None else body.auto_admit
+
     session = None
-    for _ in range(8):
+    for _ in range(16):
         candidate = create_session(
             host_name=body.host_name,
             max_pointers=settings.max_pointers,
             unused_ttl_s=settings.session_unused_ttl_s,
-            auto_admit=settings.auto_admit_default,
+            max_ttl_s=settings.session_max_ttl_s,
+            auto_admit=auto_admit,
+            now=lifecycle.now(),
         )
-        if await store.get(candidate.code) is None:
+        if await store.code_available(candidate.code):
             session = candidate
             break
     if session is None:
         raise HTTPException(status_code=500, detail={"error": "CODE_EXHAUSTED"})
 
     await store.put(session)
-    ice, ttl = ice_servers_for(settings)
+    metrics.sessions_created += 1
+    ice, ttl = ice_servers_for(settings, user_id="host")
     return CreateSessionResponse(
         session_id=session.session_id,
         code=session.code,
         display_code=session.display_code,
         join_url=session.join_url(settings.join_base_url),
         host_token=session.host_token,
-        expires_at=session.expires_at.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+        expires_at=session.expires_at.isoformat().replace("+00:00", "Z"),
         max_pointers=session.max_pointers,
         ice_servers=ice,
         ice_ttl_s=ttl,
@@ -91,9 +113,26 @@ async def create_session_route(
 
 @router.get("/sessions/{code}", response_model=SessionStatusResponse)
 async def get_session(code: str, request: Request) -> SessionStatusResponse:
-    session = await _store(request).get(normalize_code(code))
+    store = _store(request)
+    metrics = request.app.state.metrics
+    lifecycle = request.app.state.lifecycle
+    norm = normalize_code(code)
+
+    if await store.is_code_locked(norm):
+        metrics.inc_error("RATE_LIMITED")
+        raise HTTPException(status_code=429, detail={"error": "RATE_LIMITED"})
+
+    session = await store.get(norm)
     if session is None or session.status == SessionStatus.ENDED:
+        await store.record_failed_lookup(norm)
+        metrics.inc_error("ROOM_NOT_FOUND")
         raise HTTPException(status_code=404, detail={"error": "ROOM_NOT_FOUND"})
+
+    if session.is_expired(lifecycle.now()):
+        metrics.inc_error("ROOM_EXPIRED")
+        raise HTTPException(status_code=404, detail={"error": "ROOM_EXPIRED"})
+
+    await store.clear_failed_lookups(norm)
     return SessionStatusResponse(status=session.status.value, host_name=session.host_name)
 
 
@@ -102,16 +141,30 @@ async def end_session(
     code: str,
     request: Request,
     authorization: str | None = Header(default=None),
-) -> None:
+) -> Response:
     store = _store(request)
+    metrics = request.app.state.metrics
+    lifecycle = request.app.state.lifecycle
     session = await store.get(normalize_code(code))
     if session is None:
         raise HTTPException(status_code=404, detail={"error": "ROOM_NOT_FOUND"})
     token = (authorization or "").removeprefix("Bearer ").strip()
     if not token or not secrets_equal(token, session.host_token):
+        metrics.inc_error("UNAUTHORIZED")
         raise HTTPException(status_code=401, detail={"error": "UNAUTHORIZED"})
+
+    duration = (lifecycle.now() - session.created_at).total_seconds()
     session.status = SessionStatus.ENDED
     await store.put(session)
+    await store.delete(session.code)
+    metrics.sessions_ended += 1
+    metrics.observe_duration(duration)
+
+    # Best-effort notify open sockets
+    from app.ws.signaling import broadcast_session_ended
+
+    await broadcast_session_ended(request.app, normalize_code(code), "host_ended")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/ice-servers")
@@ -119,17 +172,28 @@ async def get_ice_servers(
     request: Request,
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    if not authorization:
+    store = _store(request)
+    metrics = request.app.state.metrics
+    token = (authorization or "").removeprefix("Bearer ").strip()
+    if not token:
+        metrics.inc_error("UNAUTHORIZED")
         raise HTTPException(status_code=401, detail={"error": "UNAUTHORIZED"})
-    ice, ttl = ice_servers_for(_settings(request))
+
+    session = await store.find_by_token(token)
+    if session is None:
+        metrics.inc_error("UNAUTHORIZED")
+        raise HTTPException(status_code=401, detail={"error": "UNAUTHORIZED"})
+
+    # Pointer tokens must be for an approved peer
+    if not secrets_equal(token, session.host_token):
+        approved = False
+        for peer in session.pointers.values():
+            if peer.pointer_token and secrets_equal(token, peer.pointer_token) and peer.approved:
+                approved = True
+                break
+        if not approved:
+            metrics.inc_error("UNAUTHORIZED")
+            raise HTTPException(status_code=401, detail={"error": "UNAUTHORIZED"})
+
+    ice, ttl = ice_servers_for(_settings(request), user_id=session.session_id)
     return {"ice_servers": ice, "ice_ttl_s": ttl}
-
-
-def secrets_equal(a: str, b: str) -> bool:
-    # Constant-time compare for tokens (PRD S-7).
-    if len(a) != len(b):
-        return False
-    result = 0
-    for x, y in zip(a.encode(), b.encode(), strict=True):
-        result |= x ^ y
-    return result == 0
