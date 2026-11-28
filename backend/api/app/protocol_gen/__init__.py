@@ -208,6 +208,11 @@ class HostKick(BaseModel):
     peer: str
     t: Literal["kick"]
 
+class HostReady(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    t: Literal["host_ready"]
+
 class HostReconnecting(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 

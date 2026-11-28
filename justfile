@@ -56,7 +56,7 @@ test:
     #!/usr/bin/env bash
     set -euo pipefail
     bun run test
-    cd {{api_dir}} && uv run pytest
+    (cd {{api_dir}} && uv run pytest)
     if [ -f apps/desktop/src-tauri/Cargo.toml ]; then
       if (cd apps/desktop/src-tauri && cargo test --lib 2>/dev/null); then
         echo "cargo test --lib ok"

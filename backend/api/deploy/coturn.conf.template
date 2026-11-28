@@ -5,6 +5,12 @@
 #   sudo apt install coturn
 #   sudo cp coturn.conf.template /etc/turnserver.conf
 #   # set listening-ip, external-ip, static-auth-secret to match GH_TURN_SECRET
+#   # TLS (turns:443) requires a cert the coturn user can read, e.g.:
+#   #   sudo certbot certonly --nginx -d turn.example.com
+#   #   sudo install -o turnserver -g turnserver -m 640 \
+#   #     /etc/letsencrypt/live/turn.example.com/fullchain.pem /etc/coturn/fullchain.pem
+#   #   sudo install -o turnserver -g turnserver -m 640 \
+#   #     /etc/letsencrypt/live/turn.example.com/privkey.pem /etc/coturn/privkey.pem
 #   sudo systemctl enable --now coturn
 #
 # Client URLs (example):
@@ -20,6 +26,11 @@ static-auth-secret=REPLACE_WITH_GH_TURN_SECRET
 realm=ghosthands.fortunealebiosu.dev
 # listening-ip=0.0.0.0
 # external-ip=YOUR.PUBLIC.IP
+
+# Required for turns:443 — provision certs (see install notes above).
+cert=/etc/coturn/fullchain.pem
+pkey=/etc/coturn/privkey.pem
+
 no-multicast-peers
 no-cli
 # Prefer relay for corporate firewalls (TCP / TLS 443)

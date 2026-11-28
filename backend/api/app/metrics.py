@@ -17,17 +17,23 @@ class Metrics:
     kicks: int = 0
     ws_connections: int = 0
     errors_by_code: dict[str, int] = field(default_factory=lambda: defaultdict(int))
-    session_durations_s: list[float] = field(default_factory=list)
+    # Cumulative histogram state (not a rolling window).
+    duration_count: int = 0
+    duration_sum: float = 0.0
+    duration_buckets: list[int] = field(default_factory=lambda: [0, 0, 0, 0, 0, 0])
+    _bucket_bounds: tuple[int, ...] = (60, 300, 600, 1800, 3600, 7200)
     started_at: float = field(default_factory=time.monotonic)
 
     def inc_error(self, code: str) -> None:
         self.errors_by_code[code] += 1
 
     def observe_duration(self, seconds: float) -> None:
-        self.session_durations_s.append(seconds)
-        # Cap retained samples for memory
-        if len(self.session_durations_s) > 10_000:
-            self.session_durations_s = self.session_durations_s[-5_000:]
+        self.duration_count += 1
+        self.duration_sum += seconds
+        for i, bound in enumerate(self._bucket_bounds):
+            if seconds <= bound:
+                self.duration_buckets[i] += 1
+                break
 
     def render_prometheus(self, active_sessions: int, active_ws: int) -> str:
         lines = [
@@ -65,23 +71,18 @@ class Metrics:
             safe = code.replace('"', "")
             lines.append(f'ghosthands_errors_total{{code="{safe}"}} {count}')
 
-        # Simple histogram buckets for session duration
-        buckets = [60, 300, 600, 1800, 3600, 7200]
-        counts = [0] * len(buckets)
-        for d in self.session_durations_s:
-            for i, b in enumerate(buckets):
-                if d <= b:
-                    counts[i] += 1
         lines.append("# HELP ghosthands_session_duration_seconds Session duration")
         lines.append("# TYPE ghosthands_session_duration_seconds histogram")
         cumulative = 0
-        for b, c in zip(buckets, counts, strict=True):
-            cumulative += c
-            lines.append(f'ghosthands_session_duration_seconds_bucket{{le="{b}"}} {cumulative}')
-        inf_count = len(self.session_durations_s)
-        lines.append(f'ghosthands_session_duration_seconds_bucket{{le="+Inf"}} {inf_count}')
-        lines.append(f"ghosthands_session_duration_seconds_count {len(self.session_durations_s)}")
-        total = sum(self.session_durations_s)
-        lines.append(f"ghosthands_session_duration_seconds_sum {total:.3f}")
+        for bound, count in zip(self._bucket_bounds, self.duration_buckets, strict=True):
+            cumulative += count
+            lines.append(f'ghosthands_session_duration_seconds_bucket{{le="{bound}"}} {cumulative}')
+        # +Inf includes observations above the last bound
+        above = self.duration_count - cumulative
+        lines.append(
+            f'ghosthands_session_duration_seconds_bucket{{le="+Inf"}} {cumulative + max(0, above)}'
+        )
+        lines.append(f"ghosthands_session_duration_seconds_count {self.duration_count}")
+        lines.append(f"ghosthands_session_duration_seconds_sum {self.duration_sum:.3f}")
         lines.append("")
         return "\n".join(lines)

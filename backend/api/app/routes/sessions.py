@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Header, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 
+from app.client_ip import client_ip_from_request
 from app.domain.session import SessionStatus, create_session, normalize_code
 from app.security import secrets_equal
 from app.settings import Settings
@@ -52,15 +53,6 @@ def _settings(request: Request) -> Settings:
     return settings
 
 
-def _client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    if request.client:
-        return request.client.host
-    return "unknown"
-
-
 @router.post("/sessions", status_code=status.HTTP_201_CREATED, response_model=CreateSessionResponse)
 async def create_session_route(
     body: CreateSessionRequest,
@@ -72,7 +64,7 @@ async def create_session_route(
     limiters = request.app.state.limiters
     lifecycle = request.app.state.lifecycle
 
-    ip = _client_ip(request)
+    ip = client_ip_from_request(request)
     if not limiters.create.allow(ip):
         metrics.inc_error("RATE_LIMITED")
         raise HTTPException(status_code=429, detail={"error": "RATE_LIMITED"})

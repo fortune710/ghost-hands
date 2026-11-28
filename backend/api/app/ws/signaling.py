@@ -8,6 +8,7 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from app.client_ip import client_ip_from_websocket
 from app.domain.session import (
     COLOR_RE,
     PointerPeer,
@@ -57,10 +58,7 @@ async def session_ws(websocket: WebSocket, code: str) -> None:
     lifecycle = app.state.lifecycle
     norm = normalize_code(code)
 
-    client_ip = websocket.headers.get("x-forwarded-for", "").split(",")[0].strip()
-    if not client_ip and websocket.client:
-        client_ip = websocket.client.host
-    client_ip = client_ip or "unknown"
+    client_ip = client_ip_from_websocket(websocket)
 
     session = await store.get(norm)
     if session is None or session.status == SessionStatus.ENDED:
@@ -100,7 +98,12 @@ async def session_ws(websocket: WebSocket, code: str) -> None:
         role = "host"
         session.host_connected = True
         await store.put(session)
-        registry.set_host(norm, websocket)
+        previous = registry.set_host(norm, websocket)
+        if previous is not None:
+            try:
+                await previous.close(code=4000)
+            except Exception:
+                pass
         lifecycle.clear_host_grace(norm)
         metrics.ws_connections = registry.ws_count
         await _send(
@@ -111,6 +114,14 @@ async def session_ws(websocket: WebSocket, code: str) -> None:
                 "expires_at": session.expires_at.isoformat().replace("+00:00", "Z"),
             },
         )
+        # Flush SDP/ICE that arrived while the host was offline.
+        for pending in registry.take_pending_to_host(norm):
+            await _send(websocket, pending)
+        # Tell approved pointers the host is ready so they can resend if needed.
+        for pid in registry.peer_ids(norm):
+            peer_ws = registry.get_peer(norm, pid)
+            if peer_ws is not None:
+                await _send(peer_ws, {"t": "host_ready"})
     elif t == "join":
         if not limiters.join.allow(f"{client_ip}:{norm}"):
             metrics.inc_error("RATE_LIMITED")
@@ -247,6 +258,12 @@ async def session_ws(websocket: WebSocket, code: str) -> None:
                 break
 
             if role == "host":
+                if not registry.is_current_host(norm, websocket):
+                    await _send(
+                        websocket,
+                        {"t": "error", "code": "UNAUTHORIZED", "msg": "host replaced"},
+                    )
+                    break
                 handled = await _handle_host(
                     msg,
                     websocket=websocket,
@@ -447,13 +464,22 @@ async def _handle_pointer(
                 {"t": "error", "code": "UNAUTHORIZED", "msg": "not approved"},
             )
             return None
-        host_ws = registry.get_host(session_code)
-        if host_ws is None:
-            await _send(websocket, {"t": "error", "code": "BAD_MESSAGE", "msg": "host offline"})
-            return None
         outbound = dict(msg)
         outbound["from"] = peer_id
         outbound.pop("to", None)
+        host_ws = registry.get_host(session_code)
+        if host_ws is None:
+            # Buffer until the host authenticates; pointer may also resend on host_ready.
+            registry.queue_to_host(session_code, peer_id, outbound)
+            await _send(
+                websocket,
+                {
+                    "t": "error",
+                    "code": "BAD_MESSAGE",
+                    "msg": "host offline; offer queued — will deliver when host connects",
+                },
+            )
+            return None
         await _send(host_ws, outbound)
         return None
 
@@ -474,16 +500,19 @@ async def _cleanup(
     lifecycle: Any,
 ) -> None:
     if role == "host":
-        registry.clear_host(code, websocket)
-        session = await store.get(code)
-        if session is not None and session.status != SessionStatus.ENDED:
-            session.host_connected = False
-            await store.put(session)
-            lifecycle.note_host_disconnect(code)
-            for pid in registry.peer_ids(code):
-                peer_ws = registry.get_peer(code, pid)
-                if peer_ws is not None:
-                    await _send(peer_ws, {"t": "host_reconnecting"})
+        was_current = registry.clear_host(code, websocket)
+        if was_current:
+            session = await store.get(code)
+            if session is not None and session.status != SessionStatus.ENDED:
+                # Re-check: a replacement may have registered during the await.
+                if registry.get_host(code) is None:
+                    session.host_connected = False
+                    await store.put(session)
+                    lifecycle.note_host_disconnect(code)
+                    for pid in registry.peer_ids(code):
+                        peer_ws = registry.get_peer(code, pid)
+                        if peer_ws is not None:
+                            await _send(peer_ws, {"t": "host_reconnecting"})
         metrics.ws_connections = registry.ws_count
         return
 

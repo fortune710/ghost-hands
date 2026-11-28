@@ -69,6 +69,8 @@ export function Live() {
   const poseIntervalRef = useRef(0);
   const ctrlOpenRef = useRef(false);
   const poseOpenRef = useRef(false);
+  const iceServersRef = useRef<IceServerConfig[]>([]);
+  const connStatusRef = useRef<ConnStatus>('connecting');
 
   const [connStatus, setConnStatus] = useState<ConnStatus>('connecting');
   const [gesture, setGesture] = useState('NONE');
@@ -84,10 +86,19 @@ export function Live() {
     ch.send(JSON.stringify(payload));
   }, []);
 
+  const setStatus = useCallback((next: ConnStatus) => {
+    connStatusRef.current = next;
+    setConnStatus(next);
+  }, []);
+
   const startWebRtc = useCallback(
     async (iceServers: IceServerConfig[]) => {
+      iceServersRef.current = iceServers;
       setDetail(null);
-      setConnStatus('connecting_webrtc');
+      setStatus('connecting_webrtc');
+      peerRef.current?.close();
+      poseOpenRef.current = false;
+      ctrlOpenRef.current = false;
       const ice = iceServers as RTCIceServer[];
       const peer = createPointerPeer({
         iceServers: ice,
@@ -102,7 +113,7 @@ export function Live() {
 
       peer.poseChannel.onopen = () => {
         poseOpenRef.current = true;
-        if (ctrlOpenRef.current) setConnStatus('live');
+        if (ctrlOpenRef.current) setStatus('live');
       };
       peer.ctrlChannel.onopen = () => {
         ctrlOpenRef.current = true;
@@ -115,14 +126,14 @@ export function Live() {
           enc: 'bin1',
         };
         peer.ctrlChannel.send(JSON.stringify(hello));
-        if (poseOpenRef.current) setConnStatus('live');
+        if (poseOpenRef.current) setStatus('live');
       };
 
       const offer = await peer.pc.createOffer();
       await peer.pc.setLocalDescription(offer);
       signalingRef.current?.sendSdp(peer.pc.localDescription ?? offer, 'host');
     },
-    [color, name],
+    [color, name, setStatus],
   );
 
   useEffect(() => {
@@ -134,25 +145,39 @@ export function Live() {
       onPending: () => {
         if (!cancelled) {
           setDetail(null);
-          setConnStatus('pending_approval');
+          setStatus('pending_approval');
         }
       },
       onDenied: () => {
-        if (!cancelled) setConnStatus('denied');
+        if (!cancelled) setStatus('denied');
       },
       onKicked: () => {
         if (cancelled) return;
-        setConnStatus('ended');
+        setStatus('ended');
         setDetail('You were removed from the session.');
       },
       onSessionEnded: (reason) => {
         if (cancelled) return;
-        setConnStatus('ended');
+        setStatus('ended');
         setDetail(reason);
         peerRef.current?.close();
       },
       onHostReconnecting: () => {
-        if (!cancelled) setConnStatus('reconnecting');
+        if (!cancelled && connStatusRef.current !== 'live') {
+          setStatus('reconnecting');
+        }
+      },
+      onHostReady: () => {
+        if (cancelled) return;
+        // Host (re)connected — resend offer if we're still negotiating.
+        if (
+          connStatusRef.current === 'connecting_webrtc' ||
+          connStatusRef.current === 'reconnecting'
+        ) {
+          if (iceServersRef.current.length > 0) {
+            void startWebRtc(iceServersRef.current);
+          }
+        }
       },
       onApproved: (msg) => {
         if (cancelled) return;
@@ -177,12 +202,22 @@ export function Live() {
       },
       onError: (c, msg) => {
         if (cancelled) return;
+        if (c === 'DISCONNECTED') {
+          // Signaling drop while waiting for approval / negotiating — recoverable UX.
+          if (connStatusRef.current === 'live') return;
+          setStatus('ended');
+          setDetail('Signaling disconnected. Refresh to retry.');
+          return;
+        }
         if (c === 'ROOM_FULL') {
-          setConnStatus('ended');
+          setStatus('ended');
           setDetail('This session already has a pointer.');
         } else if (c === 'ROOM_NOT_FOUND' || c === 'ROOM_EXPIRED') {
-          setConnStatus('ended');
+          setStatus('ended');
           setDetail(msg ?? c);
+        } else if (msg?.includes('host offline')) {
+          setDetail('Waiting for sharer to connect…');
+          setStatus('connecting_webrtc');
         }
       },
     });
@@ -192,7 +227,7 @@ export function Live() {
       try {
         if (!cancelled) {
           setDetail(null);
-          setConnStatus('connecting');
+          setStatus('connecting');
         }
         await signaling.connect(code);
         if (cancelled) {
@@ -202,7 +237,7 @@ export function Live() {
         signaling.join({ name, color });
       } catch {
         if (!cancelled) {
-          setConnStatus('ended');
+          setStatus('ended');
           setDetail('Could not open signaling connection.');
         }
       }
@@ -216,7 +251,7 @@ export function Live() {
       signaling.close();
       signalingRef.current = null;
     };
-  }, [raw, name, color, startWebRtc]);
+  }, [raw, name, color, startWebRtc, setStatus]);
 
   useEffect(() => {
     if (!running || connStatus === 'ended' || connStatus === 'denied') return;

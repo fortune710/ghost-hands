@@ -183,6 +183,10 @@ function OverlayApp() {
         onSessionEnded: () => {
           setPill('Session ended');
           latestPose.current = null;
+          answererRef.current?.close();
+          answererRef.current = null;
+          signalingRef.current?.close();
+          signalingRef.current = null;
           postBridge({ type: 'status', status: 'Session ended', pending: null });
         },
       });

@@ -25,6 +25,7 @@ export type SignalingHandlers = {
   onIce?: (candidate: RTCIceCandidateInit | null, from: string) => void;
   onError?: (code: string, msg?: string) => void;
   onHostReconnecting?: () => void;
+  onHostReady?: () => void;
   onReady?: (sessionId?: string) => void;
   onJoinRequest?: (msg: JoinRequestMessage) => void;
   onPeerLeft?: (peer: string, reason: string) => void;
@@ -159,6 +160,10 @@ export class SignalingClient {
     }
     if (t === 'host_reconnecting') {
       this.handlers.onHostReconnecting?.();
+      return;
+    }
+    if (t === 'host_ready') {
+      this.handlers.onHostReady?.();
       return;
     }
     if (t === 'sdp' && msg.sdp) {
